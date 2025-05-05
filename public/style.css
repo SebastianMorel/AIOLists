@@ -238,6 +238,12 @@ body {
   .addon-info {
     border-top: 1px solid #eee;
     flex-grow: 1;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
   }
   
   .hidden {
@@ -512,5 +518,30 @@ body {
   
   .remove-addon:hover {
     background-color: #c82333;
+  }
+  
+  .stremio-buttons {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 30px 0;
+  }
+  
+  .stremio-refresh-btn {
+    padding: 15px 30px;
+    background-color: #8E5AF7;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 18px;
+    transition: background-color 0.3s;
+    text-decoration: none;
+    display: inline-block;
+  }
+
+  .stremio-refresh-btn:hover {
+    background-color: #7B4DE0;
   }
   

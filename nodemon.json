@@ -1,0 +1,12 @@
+{
+  "ignore": [
+    "config.json",
+    "*.log",
+    ".git",
+    "node_modules/**/node_modules"
+  ],
+  "ext": "js,json",
+  "watch": [
+    "*.js"
+  ]
+} 
