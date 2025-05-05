@@ -873,7 +873,7 @@ async function createAddon() {
           return { metas: [] };
         }
         
-        const allMetas = await convertToStremioFormat(items, skip, 10);
+        const allMetas = await convertToStremioFormat(items, skip, 500);
         
         let filteredMetas = allMetas;
         if (type === 'movie') {
@@ -1708,7 +1708,7 @@ app.get('/catalog/:catalogId/:type.json', async (req, res) => {
 
     // Convert to Stremio format with pagination
     const skipInt = parseInt(skip);
-    const metas = await convertToStremioFormat(items, skipInt, 10);
+    const metas = await convertToStremioFormat(items, skipInt, 500);
     
     // Filter by type
     let filteredMetas = metas;
