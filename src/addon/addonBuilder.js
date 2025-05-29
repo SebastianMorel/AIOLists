@@ -1,11 +1,12 @@
-// src/addon/addonBuilder.js
 const { addonBuilder } = require('stremio-addon-sdk');
+const axios = require('axios');
 const { fetchTraktListItems, fetchTraktLists } = require('../integrations/trakt');
 const { fetchListItems: fetchMDBListItems, fetchAllLists: fetchAllMDBLists, fetchAllListsForUser } = require('../integrations/mdblist');
 const { fetchExternalAddonItems } = require('../integrations/externalAddons');
 const { convertToStremioFormat } = require('./converters');
 const { isWatchlist } = require('../utils/common');
 const { staticGenres } = require('../config');
+const { batchFetchPosters } = require('../utils/posters');
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const METADATA_FETCH_RETRY_DELAY_MS = 5000;
@@ -24,9 +25,7 @@ async function getRandomMDBListDetailsForManifest(apiKey, randomMDBListUsernames
           const randomUserList = userLists[Math.floor(Math.random() * userLists.length)];
           return {
               name: randomUserList.name || "Random MDBList",
-              id: 'random_mdblist_catalog', // Keep static ID for catalog handler
-              // Store actual chosen list details for content fetching if needed, or re-fetch in catalog handler
-              // For simplicity here, we'll just use the name for the manifest. Content handler will re-randomize.
+              id: 'random_mdblist_catalog',
           };
       }
   } catch (error) {
@@ -78,31 +77,27 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
   
   if (catalogIdFromRequest === 'random_mdblist_catalog' && enableRandomListFeature && apiKey && randomMDBListUsernames && randomMDBListUsernames.length > 0) {
     const randomUsername = randomMDBListUsernames[Math.floor(Math.random() * randomMDBListUsernames.length)];
-    const userLists = await fetchAllListsForUser(apiKey, randomUsername); // This uses /lists/user/{username}
+    const userLists = await fetchAllListsForUser(apiKey, randomUsername);
     if (userLists && userLists.length > 0) {
       const randomUserList = userLists[Math.floor(Math.random() * userLists.length)];
       console.log(`[AIOLists RandomCatalog] Selected user: ${randomUsername}, list: ${randomUserList.name} (ID: ${randomUserList.id}, Slug: ${randomUserList.slug})`);
-      
-      // *** CHANGE HERE: Use list slug instead of numeric ID for fetching items ***
-      const listIdentifierToFetch = randomUserList.slug || String(randomUserList.id); // Prefer slug, fallback to ID
-
+      const listIdentifierToFetch = randomUserList.slug || String(randomUserList.id);
       itemsResult = await fetchMDBListItems(
-        listIdentifierToFetch, // Use the chosen identifier (slug or ID)
+        listIdentifierToFetch,
         apiKey, 
-        {}, // listsMetadata not typically needed for direct item fetch
+        {},
         skip, 
         'imdbvotes',
-        'desc',      // Default order
-        false,       // isUrlImported = false
+        'desc',
+        false,
         genre, 
-        randomUsername // Pass username for context in fetchMDBListItems
+        randomUsername
       );
     } else {
       console.log(`[AIOLists RandomCatalog] User ${randomUsername} has no public lists with items or failed to fetch their lists.`);
       itemsResult = { allItems: [], hasMovies: false, hasShows: false };
     }
   }
-
 
   if (!itemsResult && isUrlImport) { 
     const addonConfig = importedAddons[catalogIdFromRequest];
@@ -118,7 +113,6 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
       );
     }
   }
-
 
   if (!itemsResult && importedAddons) { 
     for (const parentAddon of Object.values(importedAddons)) {
@@ -136,18 +130,15 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
   if (!itemsResult && catalogIdFromRequest.startsWith('trakt_') && !catalogIdFromRequest.startsWith('traktpublic_') && traktAccessToken) { 
     let sortPrefs = sortPreferences?.[originalListIdForSortLookup] ||
                       (catalogIdFromRequest.startsWith('trakt_watchlist') ? { sort: 'added', order: 'desc'} : { sort: 'rank', order: 'asc' });
-    
     if (catalogIdFromRequest === 'trakt_watchlist' && itemTypeHintForFetching === null) {
         sortPrefs.sort = 'added'; 
     }
-
     let actualItemTypeHint = itemTypeHintForFetching;
     if (catalogIdFromRequest.includes("_movies")) actualItemTypeHint = 'movie';
     if (catalogIdFromRequest.includes("_shows")) actualItemTypeHint = 'series';
     if (catalogIdFromRequest === 'trakt_watchlist' && itemTypeHintForFetching === null) {
       actualItemTypeHint = 'all'; 
     }
-
     itemsResult = await fetchTraktListItems(
       catalogIdFromRequest, userConfig, skip, sortPrefs.sort, sortPrefs.order,
       false, null, actualItemTypeHint, genre
@@ -161,12 +152,10 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
       mdbListOriginalIdFromCatalog = 'watchlist';
     }
     const mdbListSortPrefs = sortPreferences?.[mdbListOriginalIdFromCatalog] || { sort: 'imdbvotes', order: 'desc' };
-    
     let sortForMdbList = mdbListSortPrefs.sort;
     if (mdbListOriginalIdFromCatalog === 'watchlist' && itemTypeHintForFetching === null) { 
         sortForMdbList = 'added'; 
     }
-
     itemsResult = await fetchMDBListItems( 
       mdbListOriginalIdFromCatalog, apiKey, listsMetadata, skip, sortForMdbList, mdbListSortPrefs.order,
       false, genre
@@ -189,6 +178,10 @@ async function createAddon(userConfig) {
     behaviorHints: { configurable: true, configurationRequired: false }
   };
 
+  if (!manifest.idPrefixes.includes('tun_')) {
+    manifest.idPrefixes.push('tun_');
+  }
+
   const {
     apiKey, traktAccessToken, listOrder = [], hiddenLists = [], removedLists = [],
     customListNames = {}, mergedLists = {}, importedAddons = {}, listsMetadata = {},
@@ -199,28 +192,25 @@ async function createAddon(userConfig) {
   const hiddenListsSet = new Set(hiddenLists.map(String));
   const removedListsSet = new Set(removedLists.map(String));
 
-  // Add Random MDBList Catalog if enabled
   if (enableRandomListFeature && apiKey && randomMDBListUsernames && randomMDBListUsernames.length > 0) {
-    let randomCatalogDisplayName = "Random MDBList Catalog"; // Default
+    let randomCatalogDisplayName = "Random MDBList Catalog"; 
     const randomListDetails = await getRandomMDBListDetailsForManifest(apiKey, randomMDBListUsernames);
     if (randomListDetails && randomListDetails.name) {
         randomCatalogDisplayName = `Discovery`;
     }
-
     const randomCatalogExtra = [{ name: "skip" }];
     if (includeGenresInManifest) {
         randomCatalogExtra.push({ name: "genre", options: staticGenres });
     }
     manifest.catalogs.push({
-        id: 'random_mdblist_catalog', // Static ID for the handler
+        id: 'random_mdblist_catalog', 
         type: 'all', 
-        name: customListNames['random_mdblist_catalog'] || randomCatalogDisplayName, // Allow custom name override
+        name: customListNames['random_mdblist_catalog'] || randomCatalogDisplayName,
         extra: randomCatalogExtra,
         extraSupported: randomCatalogExtra.map(e => e.name),
         extraRequired: []
     });
   }
-
 
   let activeListsInfo = [];
   if (apiKey) {
@@ -235,35 +225,27 @@ async function createAddon(userConfig) {
   for (const listInfo of activeListsInfo) {
     const originalId = String(listInfo.originalId);
     let manifestListIdBase = originalId;
-
     if (listInfo.source === 'mdblist') {
       const listTypeSuffix = listInfo.listType || 'L';
       manifestListIdBase = listInfo.id === 'watchlist' ? `aiolists-watchlist-W` : `aiolists-${listInfo.id}-${listTypeSuffix}`;
     } else if (listInfo.source === 'trakt') {
       manifestListIdBase = listInfo.id;
     }
-
-    if (removedListsSet.has(manifestListIdBase) || hiddenListsSet.has(manifestListIdBase)) {
-      continue;
-    }
-
+    if (removedListsSet.has(manifestListIdBase) || hiddenListsSet.has(manifestListIdBase)) continue;
     let displayName = customListNames[manifestListIdBase] || listInfo.name;
     let metadata = { ...(listsMetadata[manifestListIdBase] || listsMetadata[originalId] || {}) };
     let hasMovies = metadata.hasMovies === true;
     let hasShows = metadata.hasShows === true;
-    
     let shouldFetchMetadata = true;
     if (listInfo.source === 'mdblist' && !apiKey) shouldFetchMetadata = false;
     if (listInfo.source === 'trakt' && !traktAccessToken && !listInfo.id?.startsWith('traktpublic_')) shouldFetchMetadata = false;
 
     if ((typeof metadata.hasMovies !== 'boolean' || typeof metadata.hasShows !== 'boolean' || metadata.errorFetching) && shouldFetchMetadata) {
-        let success = false;
-        let fetchRetries = 0;
+        let success = false; let fetchRetries = 0;
         if(metadata.errorFetching) delete metadata.errorFetching;
         console.log(`[addonBuilder] Preparing to fetch metadata for ${listInfo.source} list: ${displayName} (ID: ${manifestListIdBase})`);
         while (!success && fetchRetries < MAX_METADATA_FETCH_RETRIES) {
             try {
-                // ... (metadata fetching logic as before)
                 const tempUserConfigForMetadata = { 
                     apiKey: userConfig.apiKey, 
                     traktAccessToken: userConfig.traktAccessToken,
@@ -271,7 +253,6 @@ async function createAddon(userConfig) {
                     traktExpiresAt: userConfig.traktExpiresAt,       
                     listsMetadata: {}, 
                     rpdbApiKey: null,
-                    // Pass necessary parts of userConfig for fetchListContent to work if it relies on them
                     randomMDBListUsernames: userConfig.randomMDBListUsernames,
                     enableRandomListFeature: userConfig.enableRandomListFeature 
                 };
@@ -317,7 +298,6 @@ async function createAddon(userConfig) {
                 }
             }
         } 
-
         if (shouldFetchMetadata) {
             if (listInfo.source === 'mdblist') {
                 console.log(`[addonBuilder] Processed MDBList ${manifestListIdBase}. Waiting ${DELAY_BETWEEN_DIFFERENT_MDBLISTS_MS}ms before next list metadata fetch.`);
@@ -328,7 +308,6 @@ async function createAddon(userConfig) {
             }
         }
     } 
-
     if (hasMovies || hasShows) {
       const isMerged = (hasMovies && hasShows) ? (mergedLists[manifestListIdBase] !== false) : false;
       const catalogExtra = [{ name: "skip" }];
@@ -341,89 +320,81 @@ async function createAddon(userConfig) {
       }
     }
   }
-
-  Object.values(importedAddons || {}).forEach(addon => {
-    const addonGroupId = String(addon.id);
-    if (removedListsSet.has(addonGroupId) || hiddenListsSet.has(addonGroupId)) return;
-    const isMDBListUrlImport = !!addon.isMDBListUrlImport;
-    const isTraktPublicList = !!addon.isTraktPublicList;
-    if (isMDBListUrlImport || isTraktPublicList) { 
-      if (isMDBListUrlImport && !apiKey) return;
-      if (addon.hasMovies || addon.hasShows) { 
-        let displayName = customListNames[addonGroupId] || addon.name;
-        const canBeMerged = addon.hasMovies && addon.hasShows;
-        const isMerged = canBeMerged ? (mergedLists?.[addonGroupId] !== false) : false;
-        const catalogExtraForUrlImport = [{ name: "skip" }];
-        if (includeGenresInManifest) catalogExtraForUrlImport.push({ name: "genre", options: staticGenres });
-        const catalogPropsForUrlImport = { name: displayName, extra: catalogExtraForUrlImport, extraSupported: catalogExtraForUrlImport.map(e=>e.name), extraRequired: []};
-        if (isMerged) manifest.catalogs.push({ id: addonGroupId, type: 'all', ...catalogPropsForUrlImport });
-        else {
-          if (addon.hasMovies) manifest.catalogs.push({ id: addonGroupId, type: 'movie', ...catalogPropsForUrlImport });
-          if (addon.hasShows) manifest.catalogs.push({ id: addonGroupId, type: 'series', ...catalogPropsForUrlImport });
-        }
-      }
-    } else if (addon.catalogs && addon.catalogs.length > 0) { 
-      (addon.catalogs || []).forEach(catalog => {
-          const catalogIdForManifest = String(catalog.id);
-          if (removedListsSet.has(catalogIdForManifest) || hiddenListsSet.has(catalogIdForManifest)) return;
-          let displayName = customListNames[catalogIdForManifest] || catalog.name;
-          const finalExtraForImported = [{ name: "skip" }];
-          const finalExtraSupportedForImported = ["skip"];
-          const originalExtras = (catalog.extraSupported || catalog.extra || []);
-          let importedGenreOptions = null;
-          originalExtras.forEach(ext => {
-              const extName = (typeof ext === 'string') ? ext : ext.name;
-              const extOptions = (typeof ext === 'object' && ext.options) ? ext.options : undefined;
-              if (extName === "skip") return; 
-              if (extName === "genre") { if (extOptions) importedGenreOptions = extOptions; return; }
-              if (typeof ext === 'string') finalExtraForImported.push({ name: ext });
-              else finalExtraForImported.push({ name: extName, options: extOptions, isRequired: (typeof ext === 'object' && ext.isRequired) ? ext.isRequired : false });
-              finalExtraSupportedForImported.push(extName);
-          });
-          if (includeGenresInManifest) {
-              finalExtraForImported.push({ name: "genre", options: importedGenreOptions || staticGenres });
-              if (!finalExtraSupportedForImported.includes("genre")) finalExtraSupportedForImported.push("genre");
+    Object.values(importedAddons || {}).forEach(addon => {
+        const addonGroupId = String(addon.id);
+        if (removedListsSet.has(addonGroupId) || hiddenListsSet.has(addonGroupId)) return;
+        const isMDBListUrlImport = !!addon.isMDBListUrlImport;
+        const isTraktPublicList = !!addon.isTraktPublicList;
+        if (isMDBListUrlImport || isTraktPublicList) { 
+          if (isMDBListUrlImport && !apiKey) return;
+          if (addon.hasMovies || addon.hasShows) { 
+            let displayName = customListNames[addonGroupId] || addon.name;
+            const canBeMerged = addon.hasMovies && addon.hasShows;
+            const isMerged = canBeMerged ? (mergedLists?.[addonGroupId] !== false) : false;
+            const catalogExtraForUrlImport = [{ name: "skip" }];
+            if (includeGenresInManifest) catalogExtraForUrlImport.push({ name: "genre", options: staticGenres });
+            const catalogPropsForUrlImport = { name: displayName, extra: catalogExtraForUrlImport, extraSupported: catalogExtraForUrlImport.map(e=>e.name), extraRequired: []};
+            if (isMerged) manifest.catalogs.push({ id: addonGroupId, type: 'all', ...catalogPropsForUrlImport });
+            else {
+              if (addon.hasMovies) manifest.catalogs.push({ id: addonGroupId, type: 'movie', ...catalogPropsForUrlImport });
+              if (addon.hasShows) manifest.catalogs.push({ id: addonGroupId, type: 'series', ...catalogPropsForUrlImport });
+            }
           }
-          manifest.catalogs.push({ id: catalogIdForManifest, type: catalog.type, name: displayName, extra: finalExtraForImported, extraSupported: [...new Set(finalExtraSupportedForImported)], extraRequired: catalog.extraRequired || [] });
-      });
-    }
-  });
-
-  if (listOrder && listOrder.length > 0) {
-    const orderMap = new Map(listOrder.map((id, index) => [String(id), index]));
-    manifest.catalogs.sort((a, b) => {
-        const idA = String(a.id);
-        const idB = String(b.id);
-        const indexA = orderMap.get(idA);
-        const indexB = orderMap.get(idB);
-
-        if (indexA !== undefined && indexB !== undefined) {
-            return indexA - indexB; // Both are in user's order
-        } else if (indexA !== undefined) {
-            return -1; // A is ordered, B is not (newly added), A comes first
-        } else if (indexB !== undefined) {
-            return 1;  // B is ordered, A is not (newly added), B comes first
-        } else {
-            // Neither are in user's order (e.g. multiple new lists),
-            // preserve manifest's current relative order or sort by name as fallback
-            // If one is random_mdblist_catalog, it should be handled by its initial push or specific logic
-            if (idA === 'random_mdblist_catalog') return -1; // Prioritize random if it's new
-            if (idB === 'random_mdblist_catalog') return 1;
-            return (a.name || '').localeCompare(b.name || '');
+        } else if (addon.catalogs && addon.catalogs.length > 0) { 
+          (addon.catalogs || []).forEach(catalog => {
+              const catalogIdForManifest = String(catalog.id);
+              if (removedListsSet.has(catalogIdForManifest) || hiddenListsSet.has(catalogIdForManifest)) return;
+              let displayName = customListNames[catalogIdForManifest] || catalog.name;
+              const finalExtraForImported = [{ name: "skip" }];
+              const finalExtraSupportedForImported = ["skip"];
+              const originalExtras = (catalog.extraSupported || catalog.extra || []);
+              let importedGenreOptions = null;
+              originalExtras.forEach(ext => {
+                  const extName = (typeof ext === 'string') ? ext : ext.name;
+                  const extOptions = (typeof ext === 'object' && ext.options) ? ext.options : undefined;
+                  if (extName === "skip") return; 
+                  if (extName === "genre") { if (extOptions) importedGenreOptions = extOptions; return; }
+                  if (typeof ext === 'string') finalExtraForImported.push({ name: ext });
+                  else finalExtraForImported.push({ name: extName, options: extOptions, isRequired: (typeof ext === 'object' && ext.isRequired) ? ext.isRequired : false });
+                  finalExtraSupportedForImported.push(extName);
+              });
+              if (includeGenresInManifest) {
+                  finalExtraForImported.push({ name: "genre", options: importedGenreOptions || staticGenres });
+                  if (!finalExtraSupportedForImported.includes("genre")) finalExtraSupportedForImported.push("genre");
+              }
+              manifest.catalogs.push({ id: catalogIdForManifest, type: catalog.type, name: displayName, extra: finalExtraForImported, extraSupported: [...new Set(finalExtraSupportedForImported)], extraRequired: catalog.extraRequired || [] });
+          });
         }
-    });
-  } else {
-    // No user-defined order, put "Random MDBList Catalog" first if it exists, then others by name.
-    manifest.catalogs.sort((a, b) => {
-        const idA = String(a.id);
-        const idB = String(b.id);
-        if (idA === 'random_mdblist_catalog' && idB !== 'random_mdblist_catalog') return -1;
-        if (idB === 'random_mdblist_catalog' && idA !== 'random_mdblist_catalog') return 1;
-        // Fallback to name sorting for other non-ordered items
-        return (a.name || '').localeCompare(b.name || '');
-    });
-  }
+      });
 
+    if (listOrder && listOrder.length > 0) {
+        const orderMap = new Map(listOrder.map((id, index) => [String(id), index]));
+        manifest.catalogs.sort((a, b) => {
+            const idA = String(a.id);
+            const idB = String(b.id);
+            const indexA = orderMap.get(idA);
+            const indexB = orderMap.get(idB);
+            if (indexA !== undefined && indexB !== undefined) {
+                return indexA - indexB;
+            } else if (indexA !== undefined) {
+                return -1;
+            } else if (indexB !== undefined) {
+                return 1;
+            } else {
+                if (idA === 'random_mdblist_catalog') return -1;
+                if (idB === 'random_mdblist_catalog') return 1;
+                return (a.name || '').localeCompare(b.name || '');
+            }
+        });
+    } else {
+        manifest.catalogs.sort((a, b) => {
+            const idA = String(a.id);
+            const idB = String(b.id);
+            if (idA === 'random_mdblist_catalog' && idB !== 'random_mdblist_catalog') return -1;
+            if (idB === 'random_mdblist_catalog' && idA !== 'random_mdblist_catalog') return 1;
+            return (a.name || '').localeCompare(b.name || '');
+        });
+    }
 
   const builder = new addonBuilder(manifest);
 
@@ -439,9 +410,52 @@ async function createAddon(userConfig) {
     const cacheMaxAge = (id === 'random_mdblist_catalog' || isWatchlist(id)) ? 0 : (5 * 60);
     return Promise.resolve({ metas, cacheMaxAge }); 
   });
-  builder.defineMetaHandler(({ type, id }) => {
-    if (!id.startsWith('tt')) return Promise.resolve({ meta: null });
-    return Promise.resolve({ meta: { id, type, name: "Loading details..." } }); 
+
+  builder.defineMetaHandler(async ({ type, id }) => {
+    if (id && typeof id === 'string' && id.startsWith('tun_')) {
+      for (const addonKey in userConfig.importedAddons) {
+        const addonConfig = userConfig.importedAddons[addonKey];
+        if (addonConfig.isTraktUpNext && addonConfig.traktUpNextDynamicPath) {
+          try {
+            const metaUrl = `https://up-next.dontwanttos.top/${addonConfig.traktUpNextDynamicPath}/meta/${type}/${id}.json`;
+            console.log(`[AIOLists TraktUpNext] Fetching meta from: ${metaUrl}`);
+            const response = await axios.get(metaUrl, { timeout: 10000 });
+            if (response.data && response.data.meta) {
+              let fetchedMeta = response.data.meta;
+              if (fetchedMeta.id !== id) {
+                  if (id.endsWith(fetchedMeta.id) && fetchedMeta.id.startsWith('tt')) {
+                       fetchedMeta.id = id;
+                  }
+              }
+              if (userConfig.rpdbApiKey && fetchedMeta.id && typeof fetchedMeta.id === 'string') {
+                let imdbIdForPoster = fetchedMeta.id;
+                if (imdbIdForPoster.startsWith('tun_')) {
+                  imdbIdForPoster = imdbIdForPoster.substring(4);
+                }
+                if (imdbIdForPoster.startsWith('tt')) {
+                  const posterMap = await batchFetchPosters([imdbIdForPoster], userConfig.rpdbApiKey);
+                  if (posterMap && posterMap[imdbIdForPoster]) {
+                    fetchedMeta.poster = posterMap[imdbIdForPoster];
+                  }
+                }
+              }
+              return Promise.resolve({ meta: fetchedMeta });
+            } else {
+              console.error(`[AIOLists TraktUpNext] Meta or data missing in response for ${id} from ${metaUrl}`);
+            }
+          } catch (error) {
+            console.error(`[AIOLists TraktUpNext] Error fetching meta for ${id}: ${error.message}`);
+          }
+          return Promise.resolve({ meta: null }); 
+        }
+      }
+    }
+    
+    if (id.startsWith('tt') || id.startsWith('kitsu') || id.startsWith('tmdb')) {
+         return Promise.resolve({ meta: { id: id, type: type, name: "Loading details..." } });
+    }
+
+    return Promise.resolve({ meta: null });
   });
 
   return builder.getInterface();
