@@ -1,7 +1,7 @@
 // src/routes/api.js
 const path = require('path');
 const { defaultConfig } = require('../config');
-const { compressConfig, decompressConfig, compressShareableConfig, createShareableConfig } = require('../utils/urlConfig'); 
+const { compressConfig, decompressConfig, compressShareableConfig, createShareableConfig } = require('../utils/urlConfig');
 const { createAddon, fetchListContent } = require('../addon/addonBuilder');
 const { convertToStremioFormat } = require('../addon/converters');
 const { setCacheHeaders, isWatchlist: commonIsWatchlist } = require('../utils/common');
@@ -10,8 +10,9 @@ const { validateRPDBKey } = require('../utils/posters');
 const { authenticateTrakt, getTraktAuthUrl, fetchTraktLists: fetchTraktUserLists, fetchPublicTraktListDetails } = require('../integrations/trakt');
 const { fetchAllLists: fetchAllMDBLists, fetchListItems: fetchMDBListItemsDirect, validateMDBListKey, extractListFromUrl: extractMDBListFromUrl } = require('../integrations/mdblist');
 const { importExternalAddon: importExtAddon } = require('../integrations/externalAddons');
+const { addProfile, removeProfile } = require('../utils/profileManager');
 
-const manifestCache = new Cache({ defaultTTL: 1 * 60 * 1000 }); 
+const manifestCache = new Cache({ defaultTTL: 1 * 60 * 1000 });
 
 function purgeListConfigs(userConfig, listIdPrefixOrExactId, isExactId = false) {
   const idsToRemove = new Set();
@@ -79,16 +80,18 @@ function purgeListConfigs(userConfig, listIdPrefixOrExactId, isExactId = false) 
 module.exports = function(router) {
   router.param('configHash', async (req, res, next, configHash) => {
     try {
-      // decompressConfig merges with backend's defaultConfig, so req.userConfig will have sort options server-side
       req.userConfig = await decompressConfig(configHash);
       req.configHash = configHash;
+      if (!req.userConfig.connectedProfiles) {
+        req.userConfig.connectedProfiles = [];
+      }
       req.isPotentiallySharedConfig = (!req.userConfig.apiKey && Object.values(req.userConfig.importedAddons || {}).some(addon => addon.isMDBListUrlImport)) ||
-                                     (!req.userConfig.traktAccessToken && Object.values(req.userConfig.importedAddons || {}).some(addon => addon.isTraktPublicList)) || 
+                                     (!req.userConfig.traktAccessToken && Object.values(req.userConfig.importedAddons || {}).some(addon => addon.isTraktPublicList)) ||
                                      (!req.userConfig.traktAccessToken && (req.userConfig.listOrder || []).some(id => id.startsWith('trakt_') && !id.startsWith('traktpublic_')));
       next();
     } catch (error) {
       console.error('Error decompressing configHash:', configHash, error);
-      if (!res.headersSent) { return res.redirect('/configure'); } 
+      if (!res.headersSent) { return res.redirect('/configure'); }
       next(error);
     }
   });
@@ -163,11 +166,11 @@ module.exports = function(router) {
       const cacheKey = `manifest_${req.configHash}`;
       let addonInterface = manifestCache.get(cacheKey);
       if (!addonInterface) {
-        // createAddon uses req.userConfig, which includes sort options from backend defaultConfig
-        addonInterface = await createAddon(req.userConfig);
+        const serverUrl = `${req.protocol || 'http'}://${req.get('host')}`;
+        addonInterface = await createAddon(req.userConfig, serverUrl);
         manifestCache.set(cacheKey, addonInterface);
       }
-      setCacheHeaders(res, null); 
+      setCacheHeaders(res, null);
       res.json(addonInterface.manifest);
     } catch (error) {
       console.error('Error serving manifest:', error);
@@ -252,18 +255,51 @@ module.exports = function(router) {
   });
 
   router.get('/:configHash/config', (req, res) => {
-    // req.userConfig has sort options from decompressConfig's merge with backend defaultConfig
     const configToSend = JSON.parse(JSON.stringify(req.userConfig));
-
-    // *** Modification: Remove sort options before sending to client ***
     delete configToSend.availableSortOptions;
     delete configToSend.traktSortOptions;
-
     configToSend.hiddenLists = Array.from(new Set(configToSend.hiddenLists || []));
     configToSend.removedLists = Array.from(new Set(configToSend.removedLists || []));
+    configToSend.connectedProfiles = configToSend.connectedProfiles || [];
     res.json({ success: true, config: configToSend, isPotentiallySharedConfig: req.isPotentiallySharedConfig });
   });
   
+  router.post('/:configHash/profiles', async (req, res) => {
+    try {
+      const { name, manifestUrl, customPoster } = req.body;
+      const profileData = { name, manifestUrl, customPoster };
+      const newProfileEntry = addProfile(req.userConfig, profileData);
+      const newConfigHash = await compressConfig(req.userConfig);
+      manifestCache.clear();
+
+      res.json({ success: true, configHash: newConfigHash, profile: newProfileEntry });
+    } catch (error) {
+      console.error('Error adding profile:', error);
+      res.status(error.message.includes('required') || error.message.includes('Invalid') ? 400 : 500)
+         .json({ success: false, error: error.message || 'Failed to add profile.' });
+    }
+  });
+
+  router.delete('/:configHash/profiles/:internalId', async (req, res) => {
+    try {
+      const { internalId } = req.params;
+      const removed = removeProfile(req.userConfig, internalId);
+
+      if (!removed) {
+        return res.status(404).json({ success: false, error: 'Profile not found.' });
+      }
+
+      const newConfigHash = await compressConfig(req.userConfig);
+      manifestCache.clear();
+
+      res.json({ success: true, configHash: newConfigHash });
+    } catch (error) {
+      console.error('Error removing profile:', error);
+      res.status(500).json({ success: false, error: 'Failed to remove profile.' });
+    }
+  });
+
+
   router.post('/:configHash/apikey', async (req, res) => {
     try {
       const { apiKey, rpdbApiKey } = req.body;
@@ -673,19 +709,33 @@ module.exports = function(router) {
 
   router.post('/config/create', async (req, res) => {
     try {
-      // Start with backend's defaultConfig (which includes sort options)
-      let newConfig = { ...defaultConfig, listOrder: [], hiddenLists: [], removedLists: [], customListNames: {}, mergedLists: {}, sortPreferences: {}, importedAddons: {}, listsMetadata: {}, enableRandomListFeature: false, lastUpdated: new Date().toISOString() };
+      let newConfig = { 
+        ...defaultConfig, 
+        listOrder: [], 
+        hiddenLists: [], 
+        removedLists: [], 
+        customListNames: {}, 
+        mergedLists: {}, 
+        sortPreferences: {}, 
+        importedAddons: {}, 
+        listsMetadata: {},
+        connectedProfiles: [],
+        enableRandomListFeature: false, 
+        lastUpdated: new Date().toISOString() 
+      };
       
       if (req.body.sharedConfig) {
-        const sharedSettings = await decompressConfig(req.body.sharedConfig); // This will also merge with backend defaultConfig
+        const sharedSettings = await decompressConfig(req.body.sharedConfig);
         const shareablePart = createShareableConfig(sharedSettings); 
-        newConfig = { ...newConfig, ...shareablePart }; // Merge shareable parts, non-shareable defaults remain
+        newConfig = { ...newConfig, ...shareablePart };
+        if (sharedSettings.connectedProfiles) {
+            newConfig.connectedProfiles = sharedSettings.connectedProfiles;
+        }
       }
       
       const { sharedConfig, ...otherBodyParams } = req.body;
       newConfig = { ...newConfig, ...otherBodyParams };
 
-      // compressConfig will remove default sort options from the hash
       const configHash = await compressConfig(newConfig);
       res.json({ success: true, configHash });
     } catch (error) { console.error('Error in /config/create:', error); res.status(500).json({ error: 'Failed to create configuration' }); }
@@ -721,18 +771,13 @@ module.exports = function(router) {
   router.get('/:configHash/lists', async (req, res) => {
     try {
       // ... (existing logic to fetch and process allUserLists) ...
-      // This part of the code remains complex and fetches metadata, which populates req.userConfig.listsMetadata
-      // Ensure that any `fetchListContent` calls within this `/lists` endpoint or its sub-functions
-      // correctly use `req.userConfig` which contains the necessary sort options (from backend defaultConfig)
-      // if those sort options are needed for API calls (e.g. to Trakt).
-
       let allUserLists = [];
       if (req.userConfig.apiKey) {
           const mdbLists = await fetchAllMDBLists(req.userConfig.apiKey);
           allUserLists.push(...mdbLists.map(l => ({...l, source: 'mdblist'})));
       }
       if (req.userConfig.traktAccessToken) {
-          const traktLists = await fetchTraktUserLists(req.userConfig); // Uses req.userConfig
+          const traktLists = await fetchTraktUserLists(req.userConfig); 
           allUserLists.push(...traktLists.map(l => ({...l, source: 'trakt'})));
       }
 
@@ -790,7 +835,8 @@ module.exports = function(router) {
 
                 if (typeof metadata.hasMovies !== 'boolean' || typeof metadata.hasShows !== 'boolean') {
                     if (req.userConfig.traktAccessToken) {
-                        const tempContent = await fetchListContent(manifestListId, { ...req.userConfig, rpdbApiKey: null }, 0, null, 'all');
+                        // This might be a good place to use a more lightweight metadata check if possible
+                        const tempContent = await fetchListContent(manifestListId, { ...req.userConfig, rpdbApiKey: null }, 0, null, 'all', true /* isMetadataCheck */);
                         hasMovies = tempContent?.hasMovies || false;
                         hasShows = tempContent?.hasShows || false;
                         req.userConfig.listsMetadata[manifestListId] = { ...metadata, hasMovies, hasShows, canBeMerged: true, lastChecked: new Date().toISOString() };
@@ -811,7 +857,6 @@ module.exports = function(router) {
             const actualCanBeMerged = canBeMergedFromSource && hasMovies && hasShows;
             const isUserMerged = actualCanBeMerged ? (req.userConfig.mergedLists?.[manifestListId] !== false) : false;
             
-            // Determine default sort for this list type
             let defaultSort = { sort: (list.source === 'trakt') ? 'rank' : 'default', order: (list.source === 'trakt') ? 'asc' : 'desc' };
             if (list.source === 'trakt' && list.isTraktWatchlist) {
                 defaultSort = { sort: 'added', order: 'desc' };
@@ -839,8 +884,8 @@ module.exports = function(router) {
                 tagImage: list.source === 'trakt' ? 'https://walter.trakt.tv/hotlink-ok/public/favicon.ico' : null,
                 sortPreferences: req.userConfig.sortPreferences?.[originalListIdStr] || defaultSort,
                 source: list.source,
-                dynamic: list.dynamic, // Keep sending these for UI logic
-                mediatype: list.mediatype // Keep sending these for UI logic
+                dynamic: list.dynamic, 
+                mediatype: list.mediatype 
             };
         });
         
@@ -899,8 +944,8 @@ module.exports = function(router) {
                           traktUser: addon.traktUser,
                           traktListSlug: addon.traktListSlug,
                           requiresApiKey: isMDBListUrlImport ? 'mdblist' : (isTraktPublicList ? null : null),
-                          dynamic: isMDBListUrlImport ? addon.dynamic : undefined, // Pass MDBList specific for UI
-                          mediatype: isMDBListUrlImport ? addon.mediatype : undefined // Pass MDBList specific for UI
+                          dynamic: isMDBListUrlImport ? addon.dynamic : undefined, 
+                          mediatype: isMDBListUrlImport ? addon.mediatype : undefined 
                       });
                   }
               }
@@ -959,14 +1004,16 @@ module.exports = function(router) {
     }
 
     let responsePayload = {
-      success: true, 
+      success: true,
       lists: processedLists,
       importedAddons: req.userConfig.importedAddons || {},
-      listsMetadata: req.userConfig.listsMetadata, 
-      isPotentiallySharedConfig: req.isPotentiallySharedConfig
+      listsMetadata: req.userConfig.listsMetadata,
+      isPotentiallySharedConfig: req.isPotentiallySharedConfig,
+      // Send connectedProfiles to the frontend for display in management UI
+      connectedProfiles: req.userConfig.connectedProfiles || []
     };
 
-    if (configChangedDueToMetadataFetch) { 
+    if (configChangedDueToMetadataFetch) {
         req.userConfig.lastUpdated = new Date().toISOString();
         const newConfigHash = await compressConfig(req.userConfig);
         responsePayload.newConfigHash = newConfigHash;

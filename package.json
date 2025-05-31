@@ -1,6 +1,6 @@
 {
     "name": "stremio-aiolists-addon",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Stremio addon to manage all your lists in one place.",
     "main": "src/server.js",
     "scripts": {
