@@ -210,6 +210,17 @@ module.exports = function(router) {
                          catalogId.startsWith('traktpublic_') ? 'trakt_public_url' :
                          'external_addon';
 
+      if (catalogId === 'aiolists_profiles_catalog' && catalogType === 'channel') {
+      console.log(`[API Catalog Handler] Matched profiles catalog. req.userConfig.connectedProfiles:`, JSON.stringify(req.userConfig.connectedProfiles || "undefined/null"));
+      const { getProfileMetas } = require('../utils/profileManager');
+      const serverUrl = `<span class="math-inline">\{req\.protocol \|\| 'http'\}\://</span>{req.get('host')}`;
+      const profileMetas = getProfileMetas(req.userConfig, serverUrl);
+      console.log(`[API Catalog Handler] Profiles catalog metas count: ${profileMetas.length}`);
+      setCacheHeaders(res, catalogId);
+      return res.json({ metas: profileMetas });
+      }
+                        
+
       if ((listSource === 'mdblist_native' || listSource === 'mdblist_url' || listSource === 'random_mdblist') && !req.userConfig.apiKey) {
           console.log(`[Shared Config] MDBList API key missing for ${catalogId}. Returning empty.`);
           return res.json({ metas: [] });
