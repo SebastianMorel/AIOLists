@@ -76,24 +76,63 @@ function getProfileMetas(userConfig, serverUrl) {
   return metas; // This should return the populated array
 }
 
-function getProfileStream(userConfig, internalId) {
-  console.log('[profileManager getProfileStream] Generating stream for profile ID:', internalId);
+function getProfileStream(userConfig, internalId, addonBaseUrl) {
+  console.log('[profileManager getProfileStream] Generating stream for profile ID:', internalId, 'with addonBaseUrl:', addonBaseUrl);
   const profile = (userConfig.connectedProfiles || []).find(p => p.internalId === internalId);
+
+  if (!addonBaseUrl) {
+    console.error("[profileManager getProfileStream] addonBaseUrl is required to create redirect link but was not provided.");
+    return null;
+  }
+
   if (profile && profile.manifestUrl) {
-    try {
-      const targetUrl = new URL(profile.manifestUrl);
-      const stremioInstallUrl = `stremio://${targetUrl.host}${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`;
-      console.log('[profileManager getProfileStream] Generated stremioInstallUrl:', stremioInstallUrl);
-      return {
-        title: `Open Profile: ${profile.name}`,
-        externalUrl: stremioInstallUrl,
-        behaviorHints: { notWebReady: true }
-      };
-    } catch (e) {
-      console.error("[profileManager getProfileStream] Error parsing profile manifest URL:", profile.manifestUrl, e);
+    let actualStremioManifestLink;
+    const trimmedManifestUrl = profile.manifestUrl.trim();
+
+    if (trimmedManifestUrl.startsWith('stremio://')) {
+      try {
+        new URL(trimmedManifestUrl);
+        actualStremioManifestLink = trimmedManifestUrl;
+      } catch (e) {
+        console.error("[profileManager getProfileStream] Invalid existing stremio:// URL provided:", trimmedManifestUrl, e.message);
+        return null;
+      }
+    } else if (trimmedManifestUrl.startsWith('http://') || trimmedManifestUrl.startsWith('https://')) {
+      try {
+        const targetUrl = new URL(trimmedManifestUrl);
+        let path = targetUrl.pathname || '/';
+        if (targetUrl.search) path += targetUrl.search;
+        if (targetUrl.hash) path += targetUrl.hash;
+        actualStremioManifestLink = `stremio://${targetUrl.host}${path.startsWith('/') ? path : '/' + path}`;
+        
+        if (actualStremioManifestLink.startsWith('stremio:////')) {
+            actualStremioManifestLink = actualStremioManifestLink.replace('stremio:////', 'stremio://');
+        } else if (actualStremioManifestLink.match(/^stremio:\/\/[^/]+\/\//)) {
+            actualStremioManifestLink = actualStremioManifestLink.replace(/\/\//, '/');
+        }
+
+      } catch (e) {
+        console.error("[profileManager getProfileStream] Error parsing HTTP/S profile manifest URL:", trimmedManifestUrl, e.message);
+        return null;
+      }
+    } else {
+      console.error("[profileManager getProfileStream] Manifest URL has unknown protocol or is invalid:", trimmedManifestUrl);
       return null;
     }
+
+    // Construct the HTTPS redirector URL
+    const redirectorUrl = `${addonBaseUrl}/api/redirect?target=${encodeURIComponent(actualStremioManifestLink)}`;
+
+    console.log('[profileManager getProfileStream] Target Stremio Manifest Link:', actualStremioManifestLink);
+    console.log('[profileManager getProfileStream] Generated HTTPS Redirector URL for externalUrl:', redirectorUrl);
+    
+    return {
+      title: `Open Profile: ${profile.name}`,
+      externalUrl: redirectorUrl, // Use the HTTPS redirector link
+      behaviorHints: { notWebReady: true }
+    };
   }
+
   console.log('[profileManager getProfileStream] Profile not found or manifestUrl missing for ID:', internalId);
   return null;
 }

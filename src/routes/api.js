@@ -270,6 +270,37 @@ module.exports = function(router) {
     }
   });
 
+  router.get('/api/redirect', (req, res) => { // Changed path to be /api/redirect
+    const targetStremioUrl = req.query.target;
+  
+    if (!targetStremioUrl) {
+      return res.status(400).send('Error: Missing target URL for redirect.');
+    }
+  
+    try {
+      const decodedUrl = decodeURIComponent(targetStremioUrl);
+  
+      if (!decodedUrl.startsWith('stremio://')) {
+        console.warn(`[API Redirect] Attempted redirect to non-stremio URL: ${decodedUrl}`);
+        return res.status(400).send('Error: Invalid target protocol. Only stremio:// redirects are allowed.');
+      }
+  
+      try {
+        new URL(decodedUrl);
+      } catch (urlParseError) {
+        console.warn(`[API Redirect] Invalid Stremio URL structure for redirect: ${decodedUrl}`, urlParseError.message);
+        return res.status(400).send('Error: Invalid Stremio URL structure.');
+      }
+  
+      console.log(`[API Redirect] Redirecting to: ${decodedUrl}`);
+      res.redirect(302, decodedUrl); // HTTP 302 Found redirect
+    } catch (e) {
+      console.error(`[API Redirect] Error during URI decoding or validation: ${e.message}`);
+      res.status(500).send('Error processing redirect request.');
+    }
+  });
+  
+
   router.get('/:configHash/stream/:type/:id.json', async (req, res) => {
     try {
       const { type, id } = req.params;
@@ -279,10 +310,13 @@ module.exports = function(router) {
       setCacheHeaders(res, id);
 
       if (type === 'channel' && id.startsWith('profile_')) {
-        const streamObject = getProfileStream(userConfig, id);
-
+        // Construct the base URL of your addon server
+        const addonBaseUrl = `${req.protocol || 'http'}://${req.get('host')}`;
+        
+        const streamObject = getProfileStream(userConfig, id, addonBaseUrl); // Pass addonBaseUrl
+        
         if (streamObject) {
-          console.log(`[API Stream Handler] Found profile stream for ID ${id}:`, JSON.stringify(streamObject));
+          console.log(`[API Stream Handler] Found profile stream (redirector) for ID ${id}:`, JSON.stringify(streamObject));
           return res.json({ streams: [streamObject] });
         } else {
           console.warn(`[API Stream Handler] No profile stream found (null returned from getProfileStream) for ID ${id}.`);
