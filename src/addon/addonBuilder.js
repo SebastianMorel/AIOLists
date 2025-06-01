@@ -4,39 +4,16 @@ const { fetchTraktListItems, fetchTraktLists } = require('../integrations/trakt'
 const { fetchListItems: fetchMDBListItems, fetchAllLists: fetchAllMDBLists, fetchAllListsForUser } = require('../integrations/mdblist');
 const { fetchExternalAddonItems } = require('../integrations/externalAddons');
 const { convertToStremioFormat } = require('./converters');
-const { isWatchlist: commonIsWatchlist } = require('../utils/common'); // Renamed to avoid conflict
+const { isWatchlist: commonIsWatchlist } = require('../utils/common');
 const { staticGenres } = require('../config');
-
-// --- Import from profileManager ---
+const { decompressConfig } = require('../utils/urlConfig');
 const { getProfileMetas, getProfileStream, DEFAULT_PROFILE_POSTER_URL } = require('../utils/profileManager');
-
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const METADATA_FETCH_RETRY_DELAY_MS = 5000;
 const MAX_METADATA_FETCH_RETRIES = 2;
-const DELAY_BETWEEN_DIFFERENT_MDBLISTS_MS = 1500;
 const DELAY_BETWEEN_DIFFERENT_TRAKT_LISTS_MS = 500;
 
-
-async function getRandomMDBListDetailsForManifest(apiKey, randomMDBListUsernames) {
-  if (!apiKey || !randomMDBListUsernames || randomMDBListUsernames.length === 0) {
-      return null;
-  }
-  try {
-      const randomUsername = randomMDBListUsernames[Math.floor(Math.random() * randomMDBListUsernames.length)];
-      const userLists = await fetchAllListsForUser(apiKey, randomUsername);
-      if (userLists && userLists.length > 0) {
-          const randomUserList = userLists[Math.floor(Math.random() * userLists.length)];
-          return {
-              name: randomUserList.name || "Random MDBList",
-              id: 'random_mdblist_catalog', // Keep static ID for catalog handler
-          };
-      }
-  } catch (error) {
-      console.error("[addonBuilder] Error fetching random MDBList details for manifest:", error.message);
-  }
-  return null;
-}
 
 async function fetchListContent(listId, userConfig, skip = 0, genre = null, stremioCatalogType = 'all', isMetadataCheck = false) {
   const { apiKey, traktAccessToken, listsMetadata = {}, sortPreferences = {}, importedAddons = {}, rpdbApiKey, randomMDBListUsernames, enableRandomListFeature } = userConfig;
@@ -81,12 +58,12 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
   
   if (catalogIdFromRequest === 'random_mdblist_catalog' && enableRandomListFeature && apiKey && randomMDBListUsernames && randomMDBListUsernames.length > 0) {
     const randomUsername = randomMDBListUsernames[Math.floor(Math.random() * randomMDBListUsernames.length)];
-    const userLists = await fetchAllListsForUser(apiKey, randomUsername); // This uses /lists/user/{username}
+    const userLists = await fetchAllListsForUser(apiKey, randomUsername);
     if (userLists && userLists.length > 0) {
       const randomUserList = userLists[Math.floor(Math.random() * userLists.length)];
       console.log(`[AIOLists RandomCatalog] Selected user: ${randomUsername}, list: ${randomUserList.name} (ID: ${randomUserList.id}, Slug: ${randomUserList.slug})`);
       
-      const listIdentifierToFetch = randomUserList.slug || String(randomUserList.id); // Prefer slug, fallback to ID
+      const listIdentifierToFetch = randomUserList.slug || String(randomUserList.id);
 
       itemsResult = await fetchMDBListItems(
         listIdentifierToFetch, 
@@ -128,8 +105,6 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
       if (parentAddon.isMDBListUrlImport || parentAddon.isTraktPublicList) continue;
       const catalogEntry = parentAddon.catalogs?.find(c => String(c.id) === String(catalogIdFromRequest));
       if (catalogEntry) {
-        // External addons might not support an isMetadataCheck flag in their fetch function easily.
-        // If this becomes an issue, fetchExternalAddonItems would need adjustment or we skip metadata checks for them.
         itemsResult = await fetchExternalAddonItems(
           catalogEntry.originalId, catalogEntry.originalType, parentAddon, skip, rpdbApiKey, genre
         );
@@ -180,17 +155,19 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
   return itemsResult || null;
 }
 
-async function createAddon(userConfig, serverUrl) { // serverUrl is passed for potential local asset URLs
+
+async function createAddon(userConfig, serverUrl) {
+  console.log('[addonBuilder createAddon] Initializing. userConfig.connectedProfiles:', JSON.stringify(userConfig.connectedProfiles || "undefined/null"));
   const manifest = {
     id: 'org.stremio.aiolists',
-    version: `1.0.0-${Date.now()}`, // Dynamic version to help with cache busting
+    version: `1.0.0-${Date.now()}`,
     name: 'AIOLists',
     description: 'Manage all your lists in one place, with profile switching.',
-    resources: ['catalog', 'stream', 'meta'], // Ensure 'stream' is present
-    types: ['movie', 'series', 'channel', 'all'], // Add 'channel' for profiles
-    idPrefixes: ['tt', 'profile_'], // Add 'profile_' for our custom profile item IDs
+    resources: ['catalog', 'stream', 'meta'],
+    types: ['movie', 'series', 'channel', 'all'],
+    idPrefixes: ['tt', 'profile_'],
     catalogs: [],
-    logo: `https://i.imgur.com/DigFuAQ.png`, // Absolute URL for the addon logo
+    logo: `https://i.imgur.com/DigFuAQ.png`,
     behaviorHints: { configurable: true, configurationRequired: false }
   };
 
@@ -198,28 +175,26 @@ async function createAddon(userConfig, serverUrl) { // serverUrl is passed for p
     apiKey, traktAccessToken, listOrder = [], hiddenLists = [], removedLists = [],
     customListNames = {}, mergedLists = {}, importedAddons = {}, listsMetadata = {},
     disableGenreFilter, enableRandomListFeature, randomMDBListUsernames,
-    connectedProfiles // Destructure connectedProfiles
+    connectedProfiles
   } = userConfig;
 
-  const includeGenresInManifest = !disableGenreFilter;
-  const hiddenListsSet = new Set(hiddenLists.map(String));
-  const removedListsSet = new Set(removedLists.map(String));
-
-  // --- ADD CATALOG FOR PROFILE SWITCHING ---
   if (connectedProfiles && connectedProfiles.length > 0) {
+    console.log('[addonBuilder createAddon] Adding profiles catalog to manifest. Count:', connectedProfiles.length);
     manifest.catalogs.push({
-      id: 'aiolists_profiles_catalog', // Unique ID for this catalog
-      type: 'channel',                 // The type of items this catalog will serve
-      name: "Who's Watching?",         // Display name in Stremio
-      // extras: [{ name: "search", isRequired: false }], // Optional: if you want search within profiles
+      id: 'aiolists_profiles_catalog',
+      type: 'channel',
+      name: "Who's Watching?"
+      // 'extra' property removed as per user request.
     });
+  } else {
+    console.log('[addonBuilder createAddon] No connected profiles found, profiles catalog will not be added.');
   }
-
-  // --- Existing logic for Random MDBList Catalog ---
-  if (enableRandomListFeature && apiKey && randomMDBListUsernames && randomMDBListUsernames.length > 0) {
-    let randomCatalogDisplayName = "Discovery"; // Simplified name
+  
+  // ... (rest of your existing catalog population logic for MDBList, Trakt, etc.)
+    if (enableRandomListFeature && apiKey && randomMDBListUsernames && randomMDBListUsernames.length > 0) {
+    let randomCatalogDisplayName = "Discovery";
     const randomCatalogExtra = [{ name: "skip" }];
-    if (includeGenresInManifest) {
+    if (!disableGenreFilter) { // Assuming includeGenresInManifest means !disableGenreFilter
         randomCatalogExtra.push({ name: "genre", options: staticGenres });
     }
     manifest.catalogs.push({
@@ -230,7 +205,6 @@ async function createAddon(userConfig, serverUrl) { // serverUrl is passed for p
     });
   }
 
-  // --- Existing logic for MDBList and Trakt native lists ---
   let activeListsInfo = [];
   if (apiKey) {
     const mdbLists = await fetchAllMDBLists(apiKey);
@@ -252,7 +226,7 @@ async function createAddon(userConfig, serverUrl) { // serverUrl is passed for p
       manifestListIdBase = listInfo.id;
     }
 
-    if (removedListsSet.has(manifestListIdBase) || hiddenListsSet.has(manifestListIdBase)) {
+    if (new Set(removedLists.map(String)).has(manifestListIdBase) || new Set(hiddenLists.map(String)).has(manifestListIdBase)) {
       continue;
     }
 
@@ -266,7 +240,7 @@ async function createAddon(userConfig, serverUrl) { // serverUrl is passed for p
         hasMovies = (mediatype === 'movie' || !mediatype || mediatype === '');
         hasShows = (mediatype === 'show' || mediatype === 'series' || !mediatype || mediatype === '');
         canBeMerged = (dynamic === false || !mediatype || mediatype === '');
-        if (!userConfig.listsMetadata) userConfig.listsMetadata = {}; // Should be initialized earlier
+        if (!userConfig.listsMetadata) userConfig.listsMetadata = {};
         userConfig.listsMetadata[manifestListIdBase] = {
             ...(userConfig.listsMetadata[manifestListIdBase] || {}),
             hasMovies, hasShows, canBeMerged, lastChecked: new Date().toISOString()
@@ -282,7 +256,6 @@ async function createAddon(userConfig, serverUrl) { // serverUrl is passed for p
             let success = false;
             let fetchRetries = 0;
             if(metadata.errorFetching) delete metadata.errorFetching;
-            // console.log(`[addonBuilder] Preparing to fetch metadata for Trakt list: ${displayName} (ID: ${manifestListIdBase})`);
             while (!success && fetchRetries < MAX_METADATA_FETCH_RETRIES) {
                  try {
                     const tempUserConfigForMetadata = { ...userConfig, listsMetadata: {}, rpdbApiKey: null };
@@ -293,7 +266,7 @@ async function createAddon(userConfig, serverUrl) { // serverUrl is passed for p
                     }
                     if (manifestListIdBase === 'trakt_watchlist') typeForMetaCheck = 'all';
 
-                    const content = await fetchListContent(manifestListIdBase, tempUserConfigForMetadata, 0, null, typeForMetaCheck, true /* isMetadataCheck */);
+                    const content = await fetchListContent(manifestListIdBase, tempUserConfigForMetadata, 0, null, typeForMetaCheck, true);
                     hasMovies = content?.hasMovies || false;
                     hasShows = content?.hasShows || false;
                     if (!userConfig.listsMetadata) userConfig.listsMetadata = {};
@@ -303,7 +276,6 @@ async function createAddon(userConfig, serverUrl) { // serverUrl is passed for p
                         lastChecked: new Date().toISOString()
                     };
                     success = true;
-                    // console.log(`[addonBuilder] Successfully fetched metadata for Trakt ${manifestListIdBase}: Movies=${hasMovies}, Shows=${hasShows}`);
                 } catch (error) {
                     fetchRetries++;
                     console.error(`[addonBuilder] Error fetching metadata for Trakt ${manifestListIdBase} (attempt ${fetchRetries}/${MAX_METADATA_FETCH_RETRIES}): ${error.message}`);
@@ -329,7 +301,7 @@ async function createAddon(userConfig, serverUrl) { // serverUrl is passed for p
       const isEffectivelyMergeable = canBeMerged && hasMovies && hasShows;
       const isUserMerged = isEffectivelyMergeable ? (mergedLists[manifestListIdBase] !== false) : false;
       const catalogExtra = [{ name: "skip" }];
-      if (includeGenresInManifest) catalogExtra.push({ name: "genre", options: staticGenres });
+      if (!disableGenreFilter) catalogExtra.push({ name: "genre", options: staticGenres });
       const finalCatalogProps = { name: displayName, extra: catalogExtra };
 
       if (isUserMerged) {
@@ -341,10 +313,9 @@ async function createAddon(userConfig, serverUrl) { // serverUrl is passed for p
     }
   }
 
-  // --- Existing logic for Imported Addons (URL and Manifest based) ---
   Object.values(importedAddons || {}).forEach(addon => {
     const addonGroupId = String(addon.id);
-    if (removedListsSet.has(addonGroupId) || hiddenListsSet.has(addonGroupId)) return;
+    if (new Set(removedLists.map(String)).has(addonGroupId) || new Set(hiddenLists.map(String)).has(addonGroupId)) return;
     const isMDBListUrlImport = !!addon.isMDBListUrlImport;
     const isTraktPublicList = !!addon.isTraktPublicList;
 
@@ -362,7 +333,7 @@ async function createAddon(userConfig, serverUrl) { // serverUrl is passed for p
         const isEffectivelyMergeableForUrl = urlImportCanBeMerged && urlImportHasMovies && urlImportHasShows;
         const isUserMergedForUrl = isEffectivelyMergeableForUrl ? (mergedLists?.[addonGroupId] !== false) : false;
         const catalogExtraForUrlImport = [{ name: "skip" }];
-        if (includeGenresInManifest) catalogExtraForUrlImport.push({ name: "genre", options: staticGenres });
+        if (!disableGenreFilter) catalogExtraForUrlImport.push({ name: "genre", options: staticGenres });
         const catalogPropsForUrlImport = { name: displayName, extra: catalogExtraForUrlImport };
 
         if (isUserMergedForUrl) {
@@ -375,7 +346,7 @@ async function createAddon(userConfig, serverUrl) { // serverUrl is passed for p
     } else if (addon.catalogs && addon.catalogs.length > 0) {
        (addon.catalogs || []).forEach(catalog => {
           const catalogIdForManifest = String(catalog.id);
-          if (removedListsSet.has(catalogIdForManifest) || hiddenListsSet.has(catalogIdForManifest)) return;
+          if (new Set(removedLists.map(String)).has(catalogIdForManifest) || new Set(hiddenLists.map(String)).has(catalogIdForManifest)) return;
           let displayName = customListNames[catalogIdForManifest] || catalog.name;
           const finalExtraForImported = [{ name: "skip" }];
           let importedGenreOptions = null;
@@ -387,7 +358,7 @@ async function createAddon(userConfig, serverUrl) { // serverUrl is passed for p
               if (typeof ext === 'string') finalExtraForImported.push({ name: ext });
               else finalExtraForImported.push({ name: extName, options: extOptions, isRequired: (typeof ext === 'object' && ext.isRequired) ? ext.isRequired : false });
           });
-          if (includeGenresInManifest) {
+          if (!disableGenreFilter) {
               finalExtraForImported.push({ name: "genre", options: importedGenreOptions || staticGenres });
           }
           manifest.catalogs.push({ id: catalogIdForManifest, type: catalog.type, name: displayName, extra: finalExtraForImported });
@@ -395,7 +366,7 @@ async function createAddon(userConfig, serverUrl) { // serverUrl is passed for p
     }
   });
 
-  // --- Sort manifest.catalogs, ensuring "Who's Watching?" (if present) is at the top ---
+
   const profileCatalogDefinition = manifest.catalogs.find(cat => cat.id === 'aiolists_profiles_catalog');
   let otherCatalogs = manifest.catalogs.filter(cat => cat.id !== 'aiolists_profiles_catalog');
 
@@ -421,79 +392,91 @@ async function createAddon(userConfig, serverUrl) { // serverUrl is passed for p
     });
   }
   manifest.catalogs = profileCatalogDefinition ? [profileCatalogDefinition, ...otherCatalogs] : otherCatalogs;
+  console.log('[addonBuilder createAddon] Final manifest.catalogs structure:', JSON.stringify(manifest.catalogs.map(c => ({id: c.id, name: c.name, type: c.type}))));
 
 
   const builder = new addonBuilder(manifest);
 
-  // CATALOG HANDLER
   builder.defineCatalogHandler(async (args) => {
-    const { type, id, extra, config } = args; // config is userConfig (passed by SDK)
+    const { type, id, extra, config: handlerConfigOriginal, stremio_opts } = args; // stremio_opts might contain configHash
+
+    let currentHandlerConfig = handlerConfigOriginal;
+    if (stremio_opts && stremio_opts.configHash && handlerConfigOriginal.configHash !== stremio_opts.configHash) {
+        try {
+            console.warn(`[addonBuilder CatalogHandler] Discrepancy in configHash. stremio_opts.configHash: ${stremio_opts.configHash}, handlerConfigOriginal.configHash: ${handlerConfigOriginal.configHash}. Attempting to reload config.`);
+        } catch (e) {
+            console.error("[addonBuilder CatalogHandler] Error re-decompressing config from stremio_opts:", e);
+        }
+    }
+
     const skip = parseInt(extra?.skip) || 0;
     const genre = extra?.genre || null;
 
+    console.log(`[addonBuilder CatalogHandler ENTRY] Catalog ID: ${id}, Type: ${type}, ConfigHash (from args if available, or infer): ${args.configHash || 'N/A in args, check API middleware for actual hash used by Stremio for this req'}`);
+
+    console.log(`[addonBuilder CatalogHandler] Request for catalog id: ${id}, type: ${type}`);
     if (id === 'aiolists_profiles_catalog' && type === 'channel') {
-      const profileMetas = getProfileMetas(config, serverUrl); // serverUrl for local default posters if any
-      return Promise.resolve({ metas: profileMetas, cacheMaxAge: 5 * 60 }); // Cache profile list for 5 mins
+      console.log('[addonBuilder CatalogHandler] Matched profiles catalog. Config.connectedProfiles:', JSON.stringify(currentHandlerConfig.connectedProfiles || "undefined/null"));
+      const profileMetas = getProfileMetas(currentHandlerConfig, serverUrl); // serverUrl from createAddon scope
+      console.log('[addonBuilder CatalogHandler] Profiles catalog metas count:', profileMetas.length);
+      return Promise.resolve({ metas: profileMetas, cacheMaxAge: 5 * 60 });
     }
 
-    // Existing catalog handling logic for other lists
-    const itemsResult = await fetchListContent(id, config, skip, genre, type);
-    if (!itemsResult) return Promise.resolve({ metas: [] });
+    const itemsResult = await fetchListContent(id, handlerConfig, skip, genre, type);
+    if (!itemsResult) {
+      console.log(`[addonBuilder CatalogHandler] No itemsResult for id: ${id}, type: ${type}`);
+      return Promise.resolve({ metas: [] });
+    }
 
-    let metas = await convertToStremioFormat(itemsResult, config.rpdbApiKey);
+    let metas = await convertToStremioFormat(itemsResult, handlerConfig.rpdbApiKey);
     if (type !== 'all' && (type === 'movie' || type === 'series')) {
       metas = metas.filter(meta => meta.type === type);
     }
     const cacheMaxAgeValue = (id === 'random_mdblist_catalog' || commonIsWatchlist(id)) ? 0 : (5 * 60);
+    console.log(`[addonBuilder CatalogHandler] Returning ${metas.length} metas for id: ${id}, type: ${type}`);
     return Promise.resolve({ metas, cacheMaxAge: cacheMaxAgeValue });
   });
 
-  // STREAM HANDLER
   builder.defineStreamHandler(async (args) => {
-    const { type, id, config } = args; // config is userConfig
-
-    if (type === 'channel' && id.startsWith('profile_')) { // Check for our profile item type and ID prefix
-      const streamObject = getProfileStream(config, id);
-      return Promise.resolve({ streams: streamObject ? [streamObject] : [] });
-    }
-
-    // ... (Your existing stream handling logic for movies/series from other catalogs)
-    // This typically involves finding actual video streams, which is not what profile items do.
-    // For example:
-    // if ((type === 'movie' || type === 'series') && id.startsWith('tt')) {
-    //   const videoStreams = await yourFunctionToGetVideoStreams(id, type, config);
-    //   return Promise.resolve({ streams: videoStreams });
-    // }
-
-    return Promise.resolve({ streams: [] }); // Default: no streams for unhandled items
-  });
-
-  // META HANDLER
-  builder.defineMetaHandler(async (args) => {
-    const { type, id, config } = args; // config is userConfig
+    const { type, id, config: handlerConfig } = args;
+    console.log(`[addonBuilder StreamHandler] Request for stream id: ${id}, type: ${type}`);
 
     if (type === 'channel' && id.startsWith('profile_')) {
-      // Provide metadata for the profile item itself if Stremio requests it
-      const profile = (config.connectedProfiles || []).find(p => p.internalId === id);
+      const streamObject = getProfileStream(handlerConfig, id);
+      if (streamObject) {
+        console.log(`[addonBuilder StreamHandler] Found profile stream for ID ${id}:`, JSON.stringify(streamObject));
+        return Promise.resolve({ streams: [streamObject] });
+      } else {
+        console.log(`[addonBuilder StreamHandler] No profile stream found for ID ${id}.`);
+        return Promise.resolve({ streams: [] });
+      }
+    }
+    console.log(`[addonBuilder StreamHandler] No specific handler for id: ${id}, type: ${type}. Returning empty streams.`);
+    return Promise.resolve({ streams: [] });
+  });
+
+  builder.defineMetaHandler(async (args) => {
+    const { type, id, config: handlerConfig } = args;
+    console.log(`[addonBuilder MetaHandler] Request for meta id: ${id}, type: ${type}`);
+
+    if (type === 'channel' && id.startsWith('profile_')) {
+      const profile = (handlerConfig.connectedProfiles || []).find(p => p.internalId === id);
       if (profile) {
         let poster = profile.customPoster || DEFAULT_PROFILE_POSTER_URL;
-
-        return Promise.resolve({
-          meta: {
+        const metaItem = {
             id: profile.internalId,
             type: 'channel',
             name: profile.name,
             poster: poster,
             description: `Switch to ${profile.name}'s profile.`
-          }
-        });
+        };
+        console.log(`[addonBuilder MetaHandler] Found profile meta for ID ${id}:`, JSON.stringify(metaItem));
+        return Promise.resolve({ meta: metaItem });
+      } else {
+         console.log(`[addonBuilder MetaHandler] Profile not found for meta ID ${id}.`);
       }
     }
-
-    if ((type === 'movie' || type === 'series') && id.startsWith('tt')) {
-    }
-
-
+    // console.log(`[addonBuilder MetaHandler] No specific handler for id: ${id}, type: ${type}. Returning null meta.`);
     return Promise.resolve({ meta: null });
   });
 

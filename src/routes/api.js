@@ -18,64 +18,63 @@ function purgeListConfigs(userConfig, listIdPrefixOrExactId, isExactId = false) 
   const idsToRemove = new Set();
 
   if (isExactId) {
-      idsToRemove.add(String(listIdPrefixOrExactId));
-  }
-
-  if (userConfig.customListNames) {
-      for (const key in userConfig.customListNames) {
-          if ((isExactId && key === listIdPrefixOrExactId) || (!isExactId && key.startsWith(listIdPrefixOrExactId) && !key.startsWith('traktpublic_') )) {
-              idsToRemove.add(key);
-              delete userConfig.customListNames[key];
-          }
-      }
-  }
-
-  if (userConfig.sortPreferences) {
-      for (const key in userConfig.sortPreferences) {
-          if ((isExactId && key === listIdPrefixOrExactId) || (!isExactId && key.startsWith(listIdPrefixOrExactId) && !key.startsWith('traktpublic_'))) {
-              idsToRemove.add(key);
-              delete userConfig.sortPreferences[key];
-          }
-      }
-  }
-  if (userConfig.mergedLists) {
-      for (const key in userConfig.mergedLists) {
-          if ((isExactId && key === listIdPrefixOrExactId) || (!isExactId && key.startsWith(listIdPrefixOrExactId) && !key.startsWith('traktpublic_'))) {
-              idsToRemove.add(key);
-              delete userConfig.mergedLists[key];
-          }
-      }
-  }
-
-  const filterCondition = (id) => {
-      const idStr = String(id);
-      if (isExactId) return idStr === listIdPrefixOrExactId;
-      if (listIdPrefixOrExactId === 'trakt_') return idStr.startsWith('trakt_') && !idStr.startsWith('traktpublic_');
-      if (listIdPrefixOrExactId === 'random_mdblist_catalog' && idStr === 'random_mdblist_catalog') return true;
-      return idStr.startsWith(listIdPrefixOrExactId);
-  };
-
-  if (userConfig.listOrder) {
-      userConfig.listOrder = userConfig.listOrder.filter(id => {
-          if (filterCondition(id)) { idsToRemove.add(String(id)); return false; }
-          return true;
-      });
-  }
-  if (userConfig.hiddenLists) {
-      userConfig.hiddenLists = userConfig.hiddenLists.filter(id => {
-          if (filterCondition(id)) { idsToRemove.add(String(id)); return false; }
-          return true;
-      });
-  }
-  if (userConfig.removedLists) {
-      userConfig.removedLists = userConfig.removedLists.filter(id => {
-          if (filterCondition(id)) { idsToRemove.add(String(id)); return false; }
-          return true;
-      });
-  }
-  return idsToRemove;
+    idsToRemove.add(String(listIdPrefixOrExactId));
 }
 
+if (userConfig.customListNames) {
+    for (const key in userConfig.customListNames) {
+        if ((isExactId && key === listIdPrefixOrExactId) || (!isExactId && key.startsWith(listIdPrefixOrExactId) && !key.startsWith('traktpublic_') )) {
+            idsToRemove.add(key);
+            delete userConfig.customListNames[key];
+        }
+    }
+}
+
+if (userConfig.sortPreferences) {
+    for (const key in userConfig.sortPreferences) {
+        if ((isExactId && key === listIdPrefixOrExactId) || (!isExactId && key.startsWith(listIdPrefixOrExactId) && !key.startsWith('traktpublic_'))) {
+            idsToRemove.add(key);
+            delete userConfig.sortPreferences[key];
+        }
+    }
+}
+if (userConfig.mergedLists) {
+    for (const key in userConfig.mergedLists) {
+        if ((isExactId && key === listIdPrefixOrExactId) || (!isExactId && key.startsWith(listIdPrefixOrExactId) && !key.startsWith('traktpublic_'))) {
+            idsToRemove.add(key);
+            delete userConfig.mergedLists[key];
+        }
+    }
+}
+
+const filterCondition = (id) => {
+    const idStr = String(id);
+    if (isExactId) return idStr === listIdPrefixOrExactId;
+    if (listIdPrefixOrExactId === 'trakt_') return idStr.startsWith('trakt_') && !idStr.startsWith('traktpublic_');
+    if (listIdPrefixOrExactId === 'random_mdblist_catalog' && idStr === 'random_mdblist_catalog') return true;
+    return idStr.startsWith(listIdPrefixOrExactId);
+};
+
+if (userConfig.listOrder) {
+    userConfig.listOrder = userConfig.listOrder.filter(id => {
+        if (filterCondition(id)) { idsToRemove.add(String(id)); return false; }
+        return true;
+    });
+}
+if (userConfig.hiddenLists) {
+    userConfig.hiddenLists = userConfig.hiddenLists.filter(id => {
+        if (filterCondition(id)) { idsToRemove.add(String(id)); return false; }
+        return true;
+    });
+}
+if (userConfig.removedLists) {
+    userConfig.removedLists = userConfig.removedLists.filter(id => {
+        if (filterCondition(id)) { idsToRemove.add(String(id)); return false; }
+        return true;
+    });
+}
+return idsToRemove;
+}
 
 module.exports = function(router) {
   router.param('configHash', async (req, res, next, configHash) => {
@@ -83,14 +82,16 @@ module.exports = function(router) {
       req.userConfig = await decompressConfig(configHash);
       req.configHash = configHash;
       if (!req.userConfig.connectedProfiles) {
+        console.log(`[API Middleware] Initializing req.userConfig.connectedProfiles for hash ${configHash.substring(0,10)}...`);
         req.userConfig.connectedProfiles = [];
       }
+      console.log(`[API Middleware] Hash: ${configHash.substring(0,10)}... | connectedProfiles count: ${req.userConfig.connectedProfiles?.length || 0}`);
       req.isPotentiallySharedConfig = (!req.userConfig.apiKey && Object.values(req.userConfig.importedAddons || {}).some(addon => addon.isMDBListUrlImport)) ||
                                      (!req.userConfig.traktAccessToken && Object.values(req.userConfig.importedAddons || {}).some(addon => addon.isTraktPublicList)) ||
                                      (!req.userConfig.traktAccessToken && (req.userConfig.listOrder || []).some(id => id.startsWith('trakt_') && !id.startsWith('traktpublic_')));
       next();
     } catch (error) {
-      console.error('Error decompressing configHash:', configHash, error);
+      console.error('[API Middleware] Error decompressing configHash:', configHash.substring(0,50)+"...", error);
       if (!res.headersSent) { return res.redirect('/configure'); }
       next(error);
     }
@@ -163,17 +164,22 @@ module.exports = function(router) {
 
   router.get('/:configHash/manifest.json', async (req, res) => {
     try {
+      console.log(`[API GET /manifest.json] Request for manifest with hash: ${req.configHash.substring(0,10)}...`);
       const cacheKey = `manifest_${req.configHash}`;
       let addonInterface = manifestCache.get(cacheKey);
       if (!addonInterface) {
         const serverUrl = `${req.protocol || 'http'}://${req.get('host')}`;
+        console.log(`[API GET /manifest.json] Cache miss. Building manifest. connectedProfiles in userConfig:`, JSON.stringify(req.userConfig.connectedProfiles || "undefined/null"));
         addonInterface = await createAddon(req.userConfig, serverUrl);
         manifestCache.set(cacheKey, addonInterface);
+        console.log(`[API GET /manifest.json] Manifest built and cached.`);
+      } else {
+        console.log(`[API GET /manifest.json] Manifest served from cache.`);
       }
       setCacheHeaders(res, null);
       res.json(addonInterface.manifest);
     } catch (error) {
-      console.error('Error serving manifest:', error);
+      console.error('[API GET /manifest.json] Error serving manifest:', error);
       res.status(500).json({ error: 'Failed to serve manifest' });
     }
   });
@@ -260,21 +266,23 @@ module.exports = function(router) {
     delete configToSend.traktSortOptions;
     configToSend.hiddenLists = Array.from(new Set(configToSend.hiddenLists || []));
     configToSend.removedLists = Array.from(new Set(configToSend.removedLists || []));
-    configToSend.connectedProfiles = configToSend.connectedProfiles || [];
+    configToSend.connectedProfiles = configToSend.connectedProfiles || []; // Ensure it's present
+    console.log(`[API GET /config] Sending config for hash ${req.configHash.substring(0,10)}... connectedProfiles count: ${configToSend.connectedProfiles.length}`);
     res.json({ success: true, config: configToSend, isPotentiallySharedConfig: req.isPotentiallySharedConfig });
   });
   
   router.post('/:configHash/profiles', async (req, res) => {
     try {
-      const { name, manifestUrl, customPoster } = req.body;
-      const profileData = { name, manifestUrl, customPoster };
-      const newProfileEntry = addProfile(req.userConfig, profileData);
+      console.log(`[API POST /profiles] Request to add profile for hash: ${req.configHash.substring(0,10)}... Body:`, req.body);
+      const newProfileEntry = addProfile(req.userConfig, req.body); // userConfig is modified by reference
+      console.log(`[API POST /profiles] After addProfile call, userConfig.connectedProfiles:`, JSON.stringify(req.userConfig.connectedProfiles));
+      
       const newConfigHash = await compressConfig(req.userConfig);
       manifestCache.clear();
-
+      console.log(`[API POST /profiles] Profile added. New configHash: ${newConfigHash.substring(0,10)}...`);
       res.json({ success: true, configHash: newConfigHash, profile: newProfileEntry });
     } catch (error) {
-      console.error('Error adding profile:', error);
+      console.error('[API POST /profiles] Error adding profile:', error);
       res.status(error.message.includes('required') || error.message.includes('Invalid') ? 400 : 500)
          .json({ success: false, error: error.message || 'Failed to add profile.' });
     }
@@ -283,22 +291,24 @@ module.exports = function(router) {
   router.delete('/:configHash/profiles/:internalId', async (req, res) => {
     try {
       const { internalId } = req.params;
-      const removed = removeProfile(req.userConfig, internalId);
+      console.log(`[API DELETE /profiles] Request to remove profile ID: ${internalId} for hash: ${req.configHash.substring(0,10)}...`);
+      const removed = removeProfile(req.userConfig, internalId); // userConfig is modified by reference
 
       if (!removed) {
+        console.log(`[API DELETE /profiles] Profile ID ${internalId} not found for removal.`);
         return res.status(404).json({ success: false, error: 'Profile not found.' });
       }
+      console.log(`[API DELETE /profiles] After removeProfile call, userConfig.connectedProfiles:`, JSON.stringify(req.userConfig.connectedProfiles));
 
       const newConfigHash = await compressConfig(req.userConfig);
       manifestCache.clear();
-
+      console.log(`[API DELETE /profiles] Profile removed. New configHash: ${newConfigHash.substring(0,10)}...`);
       res.json({ success: true, configHash: newConfigHash });
     } catch (error) {
-      console.error('Error removing profile:', error);
+      console.error('[API DELETE /profiles] Error removing profile:', error);
       res.status(500).json({ success: false, error: 'Failed to remove profile.' });
     }
   });
-
 
   router.post('/:configHash/apikey', async (req, res) => {
     try {
@@ -770,6 +780,8 @@ module.exports = function(router) {
 
   router.get('/:configHash/lists', async (req, res) => {
     try {
+        console.log(`[API GET /lists] Request for lists with hash: ${req.configHash.substring(0,10)}...`);
+        console.log(`[API GET /lists] userConfig.connectedProfiles for this request:`, JSON.stringify(req.userConfig.connectedProfiles || "undefined/null"));
       // ... (existing logic to fetch and process allUserLists) ...
       let allUserLists = [];
       if (req.userConfig.apiKey) {
@@ -835,7 +847,6 @@ module.exports = function(router) {
 
                 if (typeof metadata.hasMovies !== 'boolean' || typeof metadata.hasShows !== 'boolean') {
                     if (req.userConfig.traktAccessToken) {
-                        // This might be a good place to use a more lightweight metadata check if possible
                         const tempContent = await fetchListContent(manifestListId, { ...req.userConfig, rpdbApiKey: null }, 0, null, 'all', true /* isMetadataCheck */);
                         hasMovies = tempContent?.hasMovies || false;
                         hasShows = tempContent?.hasShows || false;
@@ -1009,8 +1020,7 @@ module.exports = function(router) {
       importedAddons: req.userConfig.importedAddons || {},
       listsMetadata: req.userConfig.listsMetadata,
       isPotentiallySharedConfig: req.isPotentiallySharedConfig,
-      // Send connectedProfiles to the frontend for display in management UI
-      connectedProfiles: req.userConfig.connectedProfiles || []
+      connectedProfiles: req.userConfig.connectedProfiles || [] // Also send profiles here
     };
 
     if (configChangedDueToMetadataFetch) {
@@ -1025,5 +1035,4 @@ module.exports = function(router) {
       res.status(500).json({ error: 'Failed to fetch lists', details: error.message });
   }
 });
-
 };

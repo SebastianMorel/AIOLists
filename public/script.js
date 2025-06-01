@@ -1,7 +1,4 @@
-// public/script.js
-
-// Re-introduce defaultConfig for sort options, as server won't send them in /config or /lists responses
-const defaultConfig = { 
+const defaultConfig = {
   availableSortOptions: [
     { value: 'default', label: 'Default' }, { value: 'rank', label: 'Rank' },
     { value: 'score', label: 'Score' }, { value: 'score_average', label: 'Average Score' },
@@ -21,22 +18,22 @@ const defaultConfig = {
     { value: 'runtime', label: 'Runtime' }, { value: 'popularity', label: 'Trakt Popularity' },
     { value: 'votes', label: 'Trakt Votes' }, { value: 'my_rating', label: 'My Trakt Rating' }
   ],
-  // Other parts of defaultConfig are mainly for server-side or initial empty states
-  enableRandomListFeature: false, // This will be overridden by server config
-  randomMDBListUsernames: ['showtime416', 'garycrawfordgc', 'linaspurinis', 'hdlists'] // Server will provide actual
+  enableRandomListFeature: false,
+  randomMDBListUsernames: ['showtime416', 'garycrawfordgc', 'linaspurinis', 'hdlists'],
+  connectedProfiles: [] // Initialize connectedProfiles
 };
 
 document.addEventListener('DOMContentLoaded', function() {
   const state = {
     configHash: null,
-    userConfig: { 
+    userConfig: {
         apiKey: '',
         rpdbApiKey: '',
         traktAccessToken: null,
-        enableRandomListFeature: defaultConfig.enableRandomListFeature, // Use frontend default initially
-        randomMDBListUsernames: [...defaultConfig.randomMDBListUsernames], // Use frontend default initially
-        availableSortOptions: [...defaultConfig.availableSortOptions], // Use frontend default
-        traktSortOptions: [...defaultConfig.traktSortOptions],       // Use frontend default
+        enableRandomListFeature: defaultConfig.enableRandomListFeature,
+        randomMDBListUsernames: [...defaultConfig.randomMDBListUsernames],
+        availableSortOptions: [...defaultConfig.availableSortOptions],
+        traktSortOptions: [...defaultConfig.traktSortOptions],
         hiddenLists: new Set(),
         removedLists: new Set(),
         importedAddons: {},
@@ -45,14 +42,17 @@ document.addEventListener('DOMContentLoaded', function() {
         mergedLists: {},
         sortPreferences: {},
         disableGenreFilter: false,
-        listOrder: []
+        listOrder: [],
+        connectedProfiles: [] // Initialize in userConfig as well
     },
     currentLists: [],
     validationTimeout: null,
     universalImportTimeout: null,
     isMobile: window.matchMedia('(max-width: 600px)').matches,
     appVersion: "...",
-    isPotentiallySharedConfig: false
+    isPotentiallySharedConfig: false,
+    // Store a reference to the default profile poster URL, can be overridden if served locally
+    defaultProfilePosterUrl: 'https://i.imgur.com/TvDbHGs.png' // Same as in profileManager.js
   };
 
   const elements = {
@@ -79,16 +79,24 @@ document.addEventListener('DOMContentLoaded', function() {
     importNotification: document.getElementById('importNotification'),
     settingsNotification: document.getElementById('settingsNotification'),
     toggleGenreFilterBtn: document.getElementById('toggleGenreFilterBtn'),
-    genreFilterStatusInfo: document.getElementById('genreFilterStatusInfo'),  
+    genreFilterStatusInfo: document.getElementById('genreFilterStatusInfo'),
     toggleRandomListBtn: document.getElementById('toggleRandomListBtn'),
     randomListFeatureInfo: document.getElementById('randomListFeatureInfo'),
-    listsNotification: document.getElementById('listsNotification'), 
-    copyConfigHashBtn: null,
+    listsNotification: document.getElementById('listsNotification'),
     copyConfigHashContainer: document.getElementById('copyConfigHashContainer'),
     settingsSection: document.querySelector('.settings-section'),
     settingsHeader: document.getElementById('settingsHeader'),
     settingsContent: document.getElementById('settingsContent'),
-    settingsArrow: document.querySelector('.settings-section .collapsible-arrow')
+    settingsArrow: document.querySelector('.settings-section .collapsible-arrow'),
+
+    // --- New elements for Profile Switcher ---
+    profilesNotification: document.getElementById('profilesNotification'),
+    profileNameInput: document.getElementById('profileNameInput'),
+    profileManifestUrlInput: document.getElementById('profileManifestUrlInput'),
+    profileCustomPosterInput: document.getElementById('profileCustomPosterInput'),
+    addProfileBtn: document.getElementById('addProfileBtn'),
+    connectedProfilesContainer: document.getElementById('connectedProfilesContainer'),
+    connectedProfilesList: document.getElementById('connectedProfilesList')
   };
 
   let loadingAnimationIntervalId = null;
@@ -100,11 +108,13 @@ document.addEventListener('DOMContentLoaded', function() {
     let action = null;
 
     if (pathParts.length === 0 || (pathParts.length === 1 && pathParts[0] === 'configure')) {
+      // No specific hash, will create new
     } else if (pathParts.length >= 1 && pathParts[0] === 'import-shared' && pathParts[1]) {
         action = 'import-shared';
         initialConfigHash = pathParts[1];
     } else if (pathParts.length >= 1 && pathParts[0] !== 'api' && pathParts[0] !== 'configure') {
         initialConfigHash = pathParts[0];
+        // Ensure URL is canonical /:hash/configure
         if (pathParts.length === 1 || (pathParts.length > 1 && pathParts[1] !== 'configure')) {
             window.history.replaceState({}, '', `/${initialConfigHash}/configure`);
         }
@@ -120,7 +130,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const data = await response.json();
             if (data.success && data.configHash) {
                 state.configHash = data.configHash;
-                state.isPotentiallySharedConfig = true; 
+                state.isPotentiallySharedConfig = true;
                 window.history.replaceState({}, '', `/${state.configHash}/configure`);
             } else {
                 throw new Error(data.error || 'Failed to create new config from shared hash');
@@ -137,16 +147,16 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     await fetchAppVersionAndApplyStyles();
-    updateURLAndLoadData(); 
+    updateURLAndLoadData();
     createCopyConfigHashButton();
-    if(elements.settingsContent) elements.settingsContent.style.display = 'none'; 
-    if(elements.settingsArrow) elements.settingsArrow.textContent = '▶'; 
-    if(elements.settingsSection) elements.settingsSection.classList.remove('open'); 
+    if(elements.settingsContent) elements.settingsContent.style.display = 'none';
+    if(elements.settingsArrow) elements.settingsArrow.textContent = '▶';
+    if(elements.settingsSection) elements.settingsSection.classList.remove('open');
   }
 
   async function createNewEmptyConfig() {
     try {
-        const response = await fetch('/api/config/create', { 
+        const response = await fetch('/api/config/create', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
         });
         const data = await response.json();
@@ -159,24 +169,24 @@ document.addEventListener('DOMContentLoaded', function() {
         showNotification('apiKeys', `Init Error: ${error.message}`, 'error', true);
     }
   }
-
+  
   function createCopyConfigHashButton() {
-    if (elements.copyConfigHashBtnInstance) return; 
+    if (elements.copyConfigHashBtnInstance) return;
   
     elements.copyConfigHashBtnInstance = document.createElement('button');
     elements.copyConfigHashBtnInstance.id = 'copyConfigHashBtn';
-    elements.copyConfigHashBtnInstance.textContent = 'Copy Config Hash'; 
+    elements.copyConfigHashBtnInstance.textContent = 'Copy Config Hash';
     elements.copyConfigHashBtnInstance.title = 'Copy a shareable config hash (API keys excluded)';
     elements.copyConfigHashBtnInstance.className = 'action-btn';
     
     const descriptionText = document.createElement('span');
     descriptionText.className = 'setting-info-text';
     descriptionText.textContent = 'Copy config to share with others (API Keys excluded).';
-    descriptionText.style.marginLeft = '10px'; 
+    descriptionText.style.marginLeft = '10px';
   
     if (elements.copyConfigHashContainer) {
         elements.copyConfigHashContainer.appendChild(elements.copyConfigHashBtnInstance);
-        elements.copyConfigHashContainer.appendChild(descriptionText); 
+        elements.copyConfigHashContainer.appendChild(descriptionText);
         elements.copyConfigHashBtnInstance.addEventListener('click', handleCopyConfigHash);
     }
   }
@@ -184,7 +194,7 @@ document.addEventListener('DOMContentLoaded', function() {
   async function handleCopyConfigHash() {
     if (!state.configHash) return showNotification('settings', 'Configuration not ready to share.', 'error');
     try {
-        const response = await fetch(`/${state.configHash}/shareable-hash`); 
+        const response = await fetch(`/${state.configHash}/shareable-hash`);
         const data = await response.json();
         if (!response.ok || !data.success || !data.shareableHash) {
             throw new Error(data.error || 'Failed to generate shareable hash.');
@@ -208,119 +218,131 @@ document.addEventListener('DOMContentLoaded', function() {
 
   async function fetchAppVersionAndApplyStyles() {
     if (!state.configHash) {
-        state.appVersion = "N/A";
-        applyGlobalStyles();
-        return;
-    }
-    try {
-        const response = await fetch(`/${state.configHash}/manifest.json`); 
-        const manifest = await response.json();
-        if (manifest && manifest.version) {
-            state.appVersion = manifest.version.split('-')[0];
-        } else {
-            state.appVersion = "1.0.0"; 
-        }
-    } catch (error) {
-        console.error('Error fetching manifest for version:', error);
-        state.appVersion = "1.0.0"; 
-    }
-    applyGlobalStyles();
+      state.appVersion = "N/A"; // Or some default version
+      applyGlobalStyles();
+      return;
   }
+  try {
+      const response = await fetch(`/${state.configHash}/manifest.json`);
+      const manifest = await response.json();
+      if (manifest && manifest.version) {
+          state.appVersion = manifest.version.split('-')[0]; // Get base version
+      } else {
+          state.appVersion = "1.0.0"; // Fallback version
+      }
+  } catch (error) {
+      console.error('Error fetching manifest for version:', error);
+      state.appVersion = "1.0.0"; // Fallback version on error
+  }
+  applyGlobalStyles();
+}
 
-  function applyGlobalStyles() {
-    if (document.querySelector('.page-header')) return; 
-    const pageHeader = document.createElement('div');
-    pageHeader.className = 'page-header';
-    pageHeader.innerHTML = `
-        <img src="/assets/image.png" alt="AIOLists Logo">
-        <h1>AIOLists</h1>
-        <span class="app-version">v${state.appVersion}</span>
-        <a href="https://github.com/SebastianMorel/AIOLists" target="_blank" rel="noopener noreferrer" class="github-link" title="View on GitHub">
-            <svg viewBox="0 0 16 16" width="24" height="24" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
-        </a>`;
-    const containerDiv = document.querySelector('.container');
-    if (containerDiv && containerDiv.parentNode) {
-        containerDiv.parentNode.insertBefore(pageHeader, containerDiv);
-    } else {
-        document.body.insertBefore(pageHeader, document.body.firstChild);
-    }
+function applyGlobalStyles() {
+  // ... (existing function)
+  if (document.querySelector('.page-header')) return; 
+  const pageHeader = document.createElement('div');
+  pageHeader.className = 'page-header';
+  pageHeader.innerHTML = `
+      <img src="/assets/logo.png" alt="AIOLists Logo"> <h1>AIOLists</h1>
+      <span class="app-version">v${state.appVersion}</span>
+      <a href="https://github.com/SebastianMorel/AIOLists" target="_blank" rel="noopener noreferrer" class="github-link" title="View on GitHub">
+          <svg viewBox="0 0 16 16" width="24" height="24" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+      </a>`;
+  const containerDiv = document.querySelector('.container');
+  if (containerDiv && containerDiv.parentNode) {
+      containerDiv.parentNode.insertBefore(pageHeader, containerDiv);
+  } else {
+      document.body.insertBefore(pageHeader, document.body.firstChild);
   }
+}
 
-  function updateURLAndLoadData() {
-    if (!state.configHash) return;
-    updateURL();
-    updateStremioButtonHref();
-    loadConfiguration();
-  }
+function updateURLAndLoadData() {
+  if (!state.configHash) return;
+  updateURL();
+  updateStremioButtonHref();
+  loadConfiguration(); // This will also load connected profiles
+}
 
-  function updateURL() {
-    if (!state.configHash) return;
-    const expectedPath = `/${state.configHash}/configure`;
-    if (window.location.pathname !== expectedPath && !window.location.pathname.startsWith('/import-shared/')) {
-        window.history.replaceState({}, '', expectedPath);
-    }
+function updateURL() {
+  // ... (existing function)
+  if (!state.configHash) return;
+  const expectedPath = `/${state.configHash}/configure`;
+  if (window.location.pathname !== expectedPath && !window.location.pathname.startsWith('/import-shared/')) {
+      window.history.replaceState({}, '', expectedPath);
   }
+}
 
-  function setupEventListeners() {
-    elements.apiKeyInput.addEventListener('input', () => handleApiKeyInput(elements.apiKeyInput, 'mdblist'));
-    elements.rpdbApiKeyInput.addEventListener('input', () => handleApiKeyInput(elements.rpdbApiKeyInput, 'rpdb'));
-    elements.traktLoginBtn?.addEventListener('click', () => { elements.traktPinContainer.style.display = 'flex'; }); 
-    elements.submitTraktPin?.addEventListener('click', handleTraktPinSubmit);
-    elements.universalImportInput.addEventListener('paste', handleUniversalPaste);
-    elements.universalImportInput.addEventListener('input', handleUniversalInputChange);
-    elements.copyManifestBtn?.addEventListener('click', copyManifestUrlToClipboard);
-    elements.toggleGenreFilterBtn?.addEventListener('click', handleToggleGenreFilter); 
-    elements.toggleRandomListBtn?.addEventListener('click', handleToggleRandomListFeature);
-    elements.settingsHeader?.addEventListener('click', toggleSettingsSection); 
-    window.addEventListener('resize', () => {
-        const oldMobileState = state.isMobile;
-        state.isMobile = window.matchMedia('(max-width: 600px)').matches;
-        if (oldMobileState !== state.isMobile && state.currentLists.length > 0) { renderLists(); }
-    });
-  }
-  function toggleSettingsSection() {
-    const isOpen = elements.settingsSection.classList.toggle('open'); 
-    elements.settingsContent.style.display = isOpen ? 'block' : 'none'; 
-    elements.settingsArrow.textContent = isOpen ? '▼' : '▶'; 
-  }
-  
-  async function handleUniversalPaste(event) {
-    event.preventDefault();
-    const pastedText = (event.clipboardData || window.clipboardData).getData('text').trim();
-    if (!pastedText) return;
-    elements.universalImportInput.value = pastedText;
-    showNotification('import', `Processing pasted input...`, 'info');
-    await processUniversalImport(pastedText);
-    elements.universalImportInput.value = ''; 
-  }
+function setupEventListeners() {
+  elements.apiKeyInput.addEventListener('input', () => handleApiKeyInput(elements.apiKeyInput, 'mdblist'));
+  elements.rpdbApiKeyInput.addEventListener('input', () => handleApiKeyInput(elements.rpdbApiKeyInput, 'rpdb'));
+  elements.traktLoginBtn?.addEventListener('click', () => { if (elements.traktPinContainer) elements.traktPinContainer.style.display = 'flex'; });
+  elements.submitTraktPin?.addEventListener('click', handleTraktPinSubmit);
+  elements.universalImportInput.addEventListener('paste', handleUniversalPaste);
+  elements.universalImportInput.addEventListener('input', handleUniversalInputChange);
+  elements.copyManifestBtn?.addEventListener('click', copyManifestUrlToClipboard);
+  elements.toggleGenreFilterBtn?.addEventListener('click', handleToggleGenreFilter);
+  elements.toggleRandomListBtn?.addEventListener('click', handleToggleRandomListFeature);
+  elements.settingsHeader?.addEventListener('click', toggleSettingsSection);
 
-  function handleUniversalInputChange() {
-    if(state.universalImportTimeout) clearTimeout(state.universalImportTimeout);
-    state.universalImportTimeout = setTimeout(async () => {
-        const value = elements.universalImportInput.value.trim();
-        if(!value) return;
-        showNotification('import', `Processing input...`, 'info');
-        await processUniversalImport(value);
-        elements.universalImportInput.value = ''; 
-    }, 1200);
-  }
-  
-  async function processUniversalImport(value) {
-    let MOCK_listUrlInput = {value: ''}; 
-    let MOCK_manifestUrlInput = {value: ''}; 
+  // --- Event Listener for Add Profile Button ---
+  elements.addProfileBtn?.addEventListener('click', handleAddProfileClick);
 
-    if ((value.includes('trakt.tv/users/') && value.includes('/lists/')) || value.includes('mdblist.com/lists/')) {
-        MOCK_listUrlInput.value = value;
-        await handleListUrlImport(MOCK_listUrlInput);
-    } else if (value.endsWith('/manifest.json') || value.includes('/manifest.json?')) {
-        MOCK_manifestUrlInput.value = value;
-        await handleAddonImport(MOCK_manifestUrlInput);
-    } else if (value.startsWith('H4sIAAAAAAA') && value.length > 200) { 
-        window.location.href = `/import-shared/${value}`;
-    } else {
-        showNotification('import', 'Cannot determine input type or invalid. Supported: Trakt/MDBList URLs, manifest URLs, AIOLists config hashes.', 'error', true);
-    }
+  window.addEventListener('resize', () => {
+      const oldMobileState = state.isMobile;
+      state.isMobile = window.matchMedia('(max-width: 600px)').matches;
+      if (oldMobileState !== state.isMobile && state.currentLists.length > 0) { renderLists(); }
+      // Potentially re-render connected profiles if mobile view changes significantly
+      if (oldMobileState !== state.isMobile && state.userConfig.connectedProfiles.length > 0) { renderConnectedProfiles(); }
+  });
+}
+
+function toggleSettingsSection() {
+  // ... (existing function)
+  const isOpen = elements.settingsSection.classList.toggle('open'); 
+  elements.settingsContent.style.display = isOpen ? 'block' : 'none'; 
+  elements.settingsArrow.textContent = isOpen ? '▼' : '▶'; 
+}
+
+async function handleUniversalPaste(event) {
+  // ... (existing function)
+  event.preventDefault();
+  const pastedText = (event.clipboardData || window.clipboardData).getData('text').trim();
+  if (!pastedText) return;
+  elements.universalImportInput.value = pastedText;
+  showNotification('import', `Processing pasted input...`, 'info');
+  await processUniversalImport(pastedText);
+  elements.universalImportInput.value = ''; 
+}
+
+function handleUniversalInputChange() {
+  // ... (existing function)
+  if(state.universalImportTimeout) clearTimeout(state.universalImportTimeout);
+  state.universalImportTimeout = setTimeout(async () => {
+      const value = elements.universalImportInput.value.trim();
+      if(!value) return;
+      showNotification('import', `Processing input...`, 'info');
+      await processUniversalImport(value);
+      elements.universalImportInput.value = ''; 
+  }, 1200);
+}
+
+async function processUniversalImport(value) {
+  // ... (existing function)
+  let MOCK_listUrlInput = {value: ''}; 
+  let MOCK_manifestUrlInput = {value: ''}; 
+
+  if ((value.includes('trakt.tv/users/') && value.includes('/lists/')) || value.includes('mdblist.com/lists/')) {
+      MOCK_listUrlInput.value = value;
+      await handleListUrlImport(MOCK_listUrlInput);
+  } else if (value.endsWith('/manifest.json') || value.includes('/manifest.json?')) {
+      MOCK_manifestUrlInput.value = value;
+      await handleAddonImport(MOCK_manifestUrlInput);
+  } else if (value.startsWith('H4sIAAAAAAA') && value.length > 200) { 
+      window.location.href = `/import-shared/${value}`;
+  } else {
+      showNotification('import', 'Cannot determine input type or invalid. Supported: Trakt/MDBList URLs, manifest URLs, AIOLists config hashes.', 'error', true);
   }
+}
 
   async function handleToggleGenreFilter() {
     const newDisableState = !state.userConfig.disableGenreFilter;
@@ -422,36 +444,35 @@ document.addEventListener('DOMContentLoaded', function() {
   async function loadConfiguration() {
     if (!state.configHash) return;
     try {
-      const response = await fetch(`/${state.configHash}/config`); 
-      const data = await response.json(); // This data.config will NOT have sort options
+      const response = await fetch(`/${state.configHash}/config`);
+      const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || `Failed to load config data. Status: ${response.status}`);
 
-      state.userConfig = { 
+      state.userConfig = {
         ...state.userConfig, // Keep frontend defaults for sortOptions
-        ...data.config,      // Spread server config (which lacks sortOptions)
+        ...data.config,      // Spread server config
         hiddenLists: new Set(data.config.hiddenLists || []),
-        removedLists: new Set(data.config.removedLists || [])
+        removedLists: new Set(data.config.removedLists || []),
+        connectedProfiles: data.config.connectedProfiles || [] // Load connected profiles
       };
-      // Ensure randomMDBListUsernames uses server's if available, else frontend default
-      state.userConfig.randomMDBListUsernames = (data.config.randomMDBListUsernames && data.config.randomMDBListUsernames.length > 0) 
-                                                ? data.config.randomMDBListUsernames 
+      state.userConfig.randomMDBListUsernames = (data.config.randomMDBListUsernames && data.config.randomMDBListUsernames.length > 0)
+                                                ? data.config.randomMDBListUsernames
                                                 : [...defaultConfig.randomMDBListUsernames];
-      // availableSortOptions and traktSortOptions will remain from frontend's defaultConfig via initial state.userConfig setup
 
-      state.isPotentiallySharedConfig = data.isPotentiallySharedConfig || false; 
+      state.isPotentiallySharedConfig = data.isPotentiallySharedConfig || false;
 
-      const mdblistApiKey = state.userConfig.apiKey;
-      const rpdbApiKey = state.userConfig.rpdbApiKey;
-      updateApiKeyUI(elements.apiKeyInput, mdblistApiKey, 'mdblist', state.userConfig.mdblistUsername);
-      updateApiKeyUI(elements.rpdbApiKeyInput, rpdbApiKey, 'rpdb');
-      updateGenreFilterButtonText(); 
+      updateApiKeyUI(elements.apiKeyInput, state.userConfig.apiKey, 'mdblist', state.userConfig.mdblistUsername);
+      updateApiKeyUI(elements.rpdbApiKeyInput, state.userConfig.rpdbApiKey, 'rpdb');
+      updateGenreFilterButtonText();
       updateRandomListButtonState();
-
-      if (mdblistApiKey || rpdbApiKey) {
-        await validateAndSaveApiKeys(mdblistApiKey, rpdbApiKey, true); 
-      }
       updateTraktUI(!!state.userConfig.traktAccessToken);
-      await loadUserListsAndAddons(); 
+      
+      renderConnectedProfiles(); // Render profiles after loading config
+
+      if (state.userConfig.apiKey || state.userConfig.rpdbApiKey) {
+        await validateAndSaveApiKeys(state.userConfig.apiKey, state.userConfig.rpdbApiKey, true);
+      }
+      await loadUserListsAndAddons();
     } catch (error) { console.error('Load Config Error:', error); showNotification('apiKeys', `Load Config Error: ${error.message}`, 'error', true); }
   }
 
@@ -612,24 +633,26 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   async function loadUserListsAndAddons() {
+    // ... (existing function)
     if (!state.configHash) return;
     showNotification('lists', 'Loading lists...', 'info', true); 
     try {
       const response = await fetch(`/${state.configHash}/lists`); 
-      const data = await response.json(); // This data will NOT have sort options
+      const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Failed to load lists');
 
       state.currentLists = data.lists || [];
       state.userConfig.importedAddons = data.importedAddons || {};
       state.userConfig.listsMetadata = data.listsMetadata || state.userConfig.listsMetadata || {};
-      
-      // availableSortOptions and traktSortOptions will use the ones from frontend defaultConfig
-      // as the server /lists endpoint no longer sends them.
       state.userConfig.availableSortOptions = [...defaultConfig.availableSortOptions];
       state.userConfig.traktSortOptions = [...defaultConfig.traktSortOptions];
+      state.isPotentiallySharedConfig = data.isPotentiallySharedConfig || false;
       
-      state.isPotentiallySharedConfig = data.isPotentiallySharedConfig || false; 
-      
+      // Ensure connectedProfiles are updated from this response if it's more current
+      // or rely on /config endpoint as the source of truth for connectedProfiles.
+      // For now, /config is the primary source for userConfig.connectedProfiles.
+      // state.userConfig.connectedProfiles = data.connectedProfiles || state.userConfig.connectedProfiles || [];
+
       const randomCatalogEntry = data.lists.find(list => list.id === 'random_mdblist_catalog');
       state.userConfig.enableRandomListFeature = !!(randomCatalogEntry && !randomCatalogEntry.isHidden);
 
@@ -640,6 +663,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       renderLists();
       renderImportedAddons();
+      // renderConnectedProfiles(); // Already called in loadConfiguration or after add/remove
       updateRandomListButtonState();
       elements.listContainer.classList.remove('hidden');
       showNotification('lists', 'Lists loaded.', 'success', false); 
@@ -1173,6 +1197,126 @@ document.addEventListener('DOMContentLoaded', function() {
     return function executedFunction(...args) {
       const later = () => { clearTimeout(timeout); func(...args); };
       clearTimeout(timeout); timeout = setTimeout(later, wait); };
+  }
+
+  async function handleAddProfileClick() {
+    const name = elements.profileNameInput.value.trim();
+    const manifestUrl = elements.profileManifestUrlInput.value.trim();
+    const customPoster = elements.profileCustomPosterInput.value.trim();
+
+    if (!name) {
+      return showNotification('profiles', 'Profile Name is required.', 'error');
+    }
+    if (!manifestUrl) {
+      return showNotification('profiles', 'Manifest URL is required.', 'error');
+    }
+    // Basic URL validation (more can be added)
+    try {
+        new URL(manifestUrl);
+    } catch (e) {
+        return showNotification('profiles', 'Invalid Manifest URL format.', 'error');
+    }
+    if (customPoster) {
+        try {
+            new URL(customPoster);
+        } catch (e) {
+            return showNotification('profiles', 'Invalid Custom Poster URL format.', 'error');
+        }
+    }
+
+
+    showNotification('profiles', 'Adding profile...', 'info', true);
+    try {
+      const response = await fetch(`/${state.configHash}/profiles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, manifestUrl, customPoster: customPoster || null })
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to add profile.');
+      }
+
+      state.configHash = data.configHash;
+      if (!state.userConfig.connectedProfiles) {
+        state.userConfig.connectedProfiles = [];
+      }
+      state.userConfig.connectedProfiles.push(data.profile);
+
+      updateURL();
+      updateStremioButtonHref();
+      renderConnectedProfiles();
+
+      elements.profileNameInput.value = '';
+      elements.profileManifestUrlInput.value = '';
+      elements.profileCustomPosterInput.value = '';
+      showNotification('profiles', `Profile "${data.profile.name}" added successfully.`, 'success');
+
+    } catch (error) {
+      console.error('Add Profile Error:', error);
+      showNotification('profiles', `Error: ${error.message}`, 'error', true);
+    }
+  }
+
+  function renderConnectedProfiles() {
+    elements.connectedProfilesList.innerHTML = ''; // Clear existing items
+    if (!state.userConfig.connectedProfiles || state.userConfig.connectedProfiles.length === 0) {
+      elements.connectedProfilesContainer.classList.add('hidden');
+      return;
+    }
+    elements.connectedProfilesContainer.classList.remove('hidden');
+
+    state.userConfig.connectedProfiles.forEach(profile => {
+      const itemDiv = document.createElement('div');
+      itemDiv.className = 'addon-item-group'; // Reuse existing style
+
+      const posterUrl = profile.customPoster || state.defaultProfilePosterUrl;
+
+      itemDiv.innerHTML = `
+        <img src="${posterUrl}" alt="${profile.name} Poster" class="addon-group-logo profile-poster-preview">
+        <div class="addon-group-details">
+          <span class="addon-group-name">${profile.name}</span>
+        </div>
+        <button class="remove-profile-btn action-icon" data-profile-id="${profile.internalId}" title="Remove Profile">❌</button>
+      `;
+
+      itemDiv.querySelector('.remove-profile-btn').addEventListener('click', () => {
+        handleRemoveProfile(profile.internalId, profile.name);
+      });
+      elements.connectedProfilesList.appendChild(itemDiv);
+    });
+  }
+
+  async function handleRemoveProfile(internalId, profileName) {
+    if (!confirm(`Are you sure you want to remove the profile "${profileName}"?`)) {
+      return;
+    }
+    showNotification('profiles', `Removing profile "${profileName}"...`, 'info', true);
+    try {
+      const response = await fetch(`/${state.configHash}/profiles/${internalId}`, {
+        method: 'DELETE'
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to remove profile.');
+      }
+
+      state.configHash = data.configHash;
+      state.userConfig.connectedProfiles = state.userConfig.connectedProfiles.filter(
+        p => p.internalId !== internalId
+      );
+
+      updateURL();
+      updateStremioButtonHref();
+      renderConnectedProfiles();
+      showNotification('profiles', `Profile "${profileName}" removed.`, 'success');
+
+    } catch (error) {
+      console.error('Remove Profile Error:', error);
+      showNotification('profiles', `Error removing profile: ${error.message}`, 'error', true);
+    }
   }
 
   window.disconnectMDBList = async function() {
