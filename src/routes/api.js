@@ -10,7 +10,7 @@ const { validateRPDBKey } = require('../utils/posters');
 const { authenticateTrakt, getTraktAuthUrl, fetchTraktLists: fetchTraktUserLists, fetchPublicTraktListDetails } = require('../integrations/trakt');
 const { fetchAllLists: fetchAllMDBLists, fetchListItems: fetchMDBListItemsDirect, validateMDBListKey, extractListFromUrl: extractMDBListFromUrl } = require('../integrations/mdblist');
 const { importExternalAddon: importExtAddon } = require('../integrations/externalAddons');
-const { getProfileMetas, addProfile, removeProfile, DEFAULT_PROFILE_POSTER_URL } = require('../utils/profileManager');
+const { getProfileMetas, addProfile, removeProfile, DEFAULT_PROFILE_POSTER_URL, getProfileStream } = require('../utils/profileManager');
 
 const manifestCache = new Cache({ defaultTTL: 1 * 60 * 1000 });
 
@@ -274,13 +274,13 @@ module.exports = function(router) {
     try {
       const { type, id } = req.params;
       const userConfig = req.userConfig;
-  
-      console.log(`[API Stream Handler] Request for stream id: ${id}, type: ${type}, configHash: ${req.configHash.substring(0,10)}...`);
-      setCacheHeaders(res, id); 
-  
+
+      console.log(`[API Stream Handler] Request for stream id: ${id}, type: ${type}, configHash: ${req.configHash ? req.configHash.substring(0,10) : 'N/A'}...`);
+      setCacheHeaders(res, id);
+
       if (type === 'channel' && id.startsWith('profile_')) {
         const streamObject = getProfileStream(userConfig, id);
-        
+
         if (streamObject) {
           console.log(`[API Stream Handler] Found profile stream for ID ${id}:`, JSON.stringify(streamObject));
           return res.json({ streams: [streamObject] });
@@ -289,16 +289,15 @@ module.exports = function(router) {
           return res.json({ streams: [] });
         }
       }
-  
+
       console.log(`[API Stream Handler] No specific stream handler for id: ${id}, type: ${type}. Returning empty streams.`);
       return res.json({ streams: [] });
-  
+
     } catch (error) {
-      console.error(`Error in stream endpoint (/stream/${req.params.type}/${req.params.id}):`, error);
+      console.error(`Error in stream endpoint (/stream/${req.params.type}/${req.params.id}):`, error.message, error.stack);
       res.status(500).json({ error: 'Internal server error in stream handler' });
     }
-  });
-    
+  });    
 
   router.get('/:configHash/meta/:type/:id.json', async (req, res) => {
     try {
@@ -306,9 +305,6 @@ module.exports = function(router) {
       const userConfig = req.userConfig; // Populated by your existing 'configHash' parameter middleware
   
       console.log(`[API Meta Handler] Request for meta id: ${id}, type: ${type}, configHash: ${req.configHash.substring(0,10)}...`);
-      // Apply cache headers. Profile metadata is fairly static once a profile is added,
-      // but changes if the profile details (name, customPoster) are made editable in the future.
-      // For now, a moderate cache or no-cache if changes are frequent via other means.
       setCacheHeaders(res, id); // You might want specific logic in setCacheHeaders for 'profile_' IDs
   
       if (type === 'channel' && id.startsWith('profile_')) {
