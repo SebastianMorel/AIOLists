@@ -270,6 +270,36 @@ module.exports = function(router) {
     }
   });
 
+  router.get('/:configHash/stream/:type/:id.json', async (req, res) => {
+    try {
+      const { type, id } = req.params;
+      const userConfig = req.userConfig;
+  
+      console.log(`[API Stream Handler] Request for stream id: ${id}, type: ${type}, configHash: ${req.configHash.substring(0,10)}...`);
+      setCacheHeaders(res, id); 
+  
+      if (type === 'channel' && id.startsWith('profile_')) {
+        const streamObject = getProfileStream(userConfig, id);
+        
+        if (streamObject) {
+          console.log(`[API Stream Handler] Found profile stream for ID ${id}:`, JSON.stringify(streamObject));
+          return res.json({ streams: [streamObject] });
+        } else {
+          console.warn(`[API Stream Handler] No profile stream found (null returned from getProfileStream) for ID ${id}.`);
+          return res.json({ streams: [] });
+        }
+      }
+  
+      console.log(`[API Stream Handler] No specific stream handler for id: ${id}, type: ${type}. Returning empty streams.`);
+      return res.json({ streams: [] });
+  
+    } catch (error) {
+      console.error(`Error in stream endpoint (/stream/${req.params.type}/${req.params.id}):`, error);
+      res.status(500).json({ error: 'Internal server error in stream handler' });
+    }
+  });
+    
+
   router.get('/:configHash/meta/:type/:id.json', async (req, res) => {
     try {
       const { type, id } = req.params;
