@@ -1,6 +1,6 @@
 // src/utils/profileManager.js
 
-const DEFAULT_PROFILE_POSTER_URL = 'https://i.imgur.com/TvDbHGs.png';
+const DEFAULT_PROFILE_POSTER_URL = 'https://i.imgur.com/ZgGYfad.jpeg';
 
 function addProfile(userConfig, profileData) {
   const { name, manifestUrl, customPoster } = profileData;

@@ -10,7 +10,7 @@ const { validateRPDBKey } = require('../utils/posters');
 const { authenticateTrakt, getTraktAuthUrl, fetchTraktLists: fetchTraktUserLists, fetchPublicTraktListDetails } = require('../integrations/trakt');
 const { fetchAllLists: fetchAllMDBLists, fetchListItems: fetchMDBListItemsDirect, validateMDBListKey, extractListFromUrl: extractMDBListFromUrl } = require('../integrations/mdblist');
 const { importExternalAddon: importExtAddon } = require('../integrations/externalAddons');
-const { addProfile, removeProfile } = require('../utils/profileManager');
+const { getProfileMetas, addProfile, removeProfile, DEFAULT_PROFILE_POSTER_URL } = require('../utils/profileManager');
 
 const manifestCache = new Cache({ defaultTTL: 1 * 60 * 1000 });
 
@@ -212,7 +212,6 @@ module.exports = function(router) {
 
       if (catalogId === 'aiolists_profiles_catalog' && catalogType === 'channel') {
       console.log(`[API Catalog Handler] Matched profiles catalog. req.userConfig.connectedProfiles:`, JSON.stringify(req.userConfig.connectedProfiles || "undefined/null"));
-      const { getProfileMetas } = require('../utils/profileManager');
       const serverUrl = `<span class="math-inline">\{req\.protocol \|\| 'http'\}\://</span>{req.get('host')}`;
       const profileMetas = getProfileMetas(req.userConfig, serverUrl);
       console.log(`[API Catalog Handler] Profiles catalog metas count: ${profileMetas.length}`);
@@ -270,6 +269,45 @@ module.exports = function(router) {
       res.status(500).json({ error: 'Internal server error in catalog handler' });
     }
   });
+
+  router.get('/:configHash/meta/:type/:id.json', async (req, res) => {
+    try {
+      const { type, id } = req.params;
+      const userConfig = req.userConfig; // Populated by your existing 'configHash' parameter middleware
+  
+      console.log(`[API Meta Handler] Request for meta id: ${id}, type: ${type}, configHash: ${req.configHash.substring(0,10)}...`);
+      // Apply cache headers. Profile metadata is fairly static once a profile is added,
+      // but changes if the profile details (name, customPoster) are made editable in the future.
+      // For now, a moderate cache or no-cache if changes are frequent via other means.
+      setCacheHeaders(res, id); // You might want specific logic in setCacheHeaders for 'profile_' IDs
+  
+      if (type === 'channel' && id.startsWith('profile_')) {
+        const profile = (userConfig.connectedProfiles || []).find(p => p.internalId === id);
+        if (profile) {
+          const posterUrl = profile.customPoster || DEFAULT_PROFILE_POSTER_URL;
+          const metaItem = {
+            id: profile.internalId,
+            type: 'channel',
+            name: profile.name,
+            poster: posterUrl,
+            description: `Switch to ${profile.name}'s profile. Manifest URL: ${profile.manifestUrl}`,
+          };
+          console.log(`[API Meta Handler] Found profile meta for ID ${id}:`, JSON.stringify(metaItem));
+          return res.json({ meta: metaItem });
+        } else {
+          console.warn(`[API Meta Handler] Profile not found for meta ID ${id} in userConfig.connectedProfiles.`);
+        }
+      }
+  
+      console.log(`[API Meta Handler] No specific meta handler for id: ${id}, type: ${type}. Returning null meta.`);
+      return res.json({ meta: null }); // Stremio expects a { meta: null } or { meta: {...} } response
+  
+    } catch (error) {
+      console.error(`Error in meta endpoint (/meta/<span class="math-inline">\{req\.params\.type\}/</span>{req.params.id}):`, error);
+      res.status(500).json({ error: 'Internal server error in meta handler' });
+    }
+  });
+  
 
   router.get('/:configHash/config', (req, res) => {
     const configToSend = JSON.parse(JSON.stringify(req.userConfig));
