@@ -62,8 +62,11 @@ const defaultConfig = {
     { value: 'released', label: 'Release Date' },
     { value: 'runtime', label: 'Runtime' },
     { value: 'popularity', label: 'Trakt Popularity' },
-    { value: 'votes', label: 'Trakt Votes' },
+    { value: 'random', label: 'Random' },
+    { value: 'percentage', label: 'Percentage Watched' },
     { value: 'my_rating', label: 'My Trakt Rating' },
+    { value: 'watched ', label: 'Watched' },
+    { value: 'collected', label: 'Collected' },
   ]
 };
 

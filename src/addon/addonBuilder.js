@@ -160,7 +160,7 @@ async function createAddon(userConfig, serverUrl) {
   console.log('[addonBuilder createAddon] Initializing. userConfig.connectedProfiles:', JSON.stringify(userConfig.connectedProfiles || "undefined/null"));
   const manifest = {
     id: 'org.stremio.aiolists',
-    version: `1.0.${Date.now()}`,
+    version: `1.0.1-${Date.now()}`,
     name: 'AIOLists',
     description: 'Manage all your lists in one place, with profile switching.',
     resources: ['catalog', 'stream', 'meta'],
