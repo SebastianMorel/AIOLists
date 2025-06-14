@@ -1968,7 +1968,12 @@ module.exports = function(router) {
                     } else if (catalogHasMovies) {
                         effectiveMediaTypeDisplay = 'Movie';
                     } else if (catalogHasShows) {
-                        effectiveMediaTypeDisplay = 'Series';
+                        // Check if this is specifically a TV catalog to display as "TV" instead of "Series"
+                        if (catTypeLower === 'tv') {
+                            effectiveMediaTypeDisplay = 'TV';
+                        } else {
+                            effectiveMediaTypeDisplay = 'Series';
+                        }
                     } else {
                          effectiveMediaTypeDisplay = catTypeLower.charAt(0).toUpperCase() + catTypeLower.slice(1);
                     }

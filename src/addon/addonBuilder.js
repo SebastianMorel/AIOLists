@@ -223,7 +223,9 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
           itemsResult = {
             allItems: externalResult.metas,
             hasMovies: externalResult.hasMovies,
-            hasShows: externalResult.hasShows
+            hasShows: externalResult.hasShows,
+            hasChannels: externalResult.hasChannels,
+            hasContent: externalResult.hasContent
           };
         }
         break;
@@ -286,14 +288,32 @@ async function createAddon(userConfig) {
   }
   
   await initTraktApi(userConfig);
+  
+  // Detect if any imported addons provide stream resources
+  let hasExternalStreamProviders = false;
+  let externalIdPrefixes = new Set(['tt', 'tmdb:']);
+  
+  if (userConfig.importedAddons) {
+    Object.values(userConfig.importedAddons).forEach(addon => {
+      if (addon.resources && addon.resources.includes('stream')) {
+        hasExternalStreamProviders = true;
+        console.log(`[AddonBuilder] External addon ${addon.name} provides stream resources`);
+      }
+      // Add ID prefixes from external addons
+      if (addon.idPrefixes && Array.isArray(addon.idPrefixes)) {
+        addon.idPrefixes.forEach(prefix => externalIdPrefixes.add(prefix));
+      }
+    });
+  }
+  
   const manifest = {
     id: 'org.stremio.aiolists',
     version: `1.2.4-${Date.now()}`,
     name: 'AIOLists',
     description: 'Manage all your lists in one place.',
-    resources: ['catalog', 'meta'],
+    resources: hasExternalStreamProviders ? ['catalog', 'meta', 'stream'] : ['catalog', 'meta'],
     types: [], // Will be populated dynamically
-    idPrefixes: ['tt', 'tmdb:'],
+    idPrefixes: Array.from(externalIdPrefixes),
     catalogs: [],
     logo: `https://i.imgur.com/DigFuAQ.png`,
     behaviorHints: { configurable: true, configurationRequired: false }
@@ -305,7 +325,7 @@ async function createAddon(userConfig) {
     disableGenreFilter, enableRandomListFeature, randomMDBListUsernames
   } = userConfig;
 
-  const allKnownTypes = new Set(['movie', 'series', 'all']);
+  const allKnownTypes = new Set(['movie', 'series', 'tv', 'channel', 'all']);
 
   // Add search type if search functionality is enabled
   const searchSources = userConfig.searchSources || ['cinemeta'];
@@ -451,20 +471,39 @@ async function createAddon(userConfig) {
     let displayName = getManifestCatalogName(currentListId, originalName, customListNames);
 
     const catalogExtraForThisList = [{ name: "skip" }];
-    if (includeGenresInManifest) {
-        let genreOpts = availableGenres;
-        if (isImportedSubCatalog && listSourceInfo.extraSupported && Array.isArray(listSourceInfo.extraSupported)) {
-            const genreExtraDef = listSourceInfo.extraSupported.find(e => typeof e === 'object' && e.name === 'genre');
-            if (genreExtraDef && Array.isArray(genreExtraDef.options) && genreExtraDef.options.length > 0) {
-                genreOpts = genreExtraDef.options;
+            if (includeGenresInManifest) {
+            let genreOpts = availableGenres;
+            
+            // For imported catalogs (both sub-catalogs and direct addon imports), try to use genres from the addon manifest
+            if (isImportedSubCatalog && listSourceInfo.extraSupported && Array.isArray(listSourceInfo.extraSupported)) {
+                const genreExtraDef = listSourceInfo.extraSupported.find(e => typeof e === 'object' && e.name === 'genre');
+                if (genreExtraDef && Array.isArray(genreExtraDef.options) && genreExtraDef.options.length > 0) {
+                    genreOpts = genreExtraDef.options;
+                    console.log(`[AddonBuilder] Using external addon genres for ${currentListId}:`, genreOpts);
+                }
             }
+            // For direct external addon imports, check the parent addon for genres
+            else if (parentAddon && parentAddon.catalogs) {
+                const catalogWithGenres = parentAddon.catalogs.find(cat => 
+                    cat.extraSupported && cat.extraSupported.some(extra => 
+                        extra.name === 'genre' && extra.options && extra.options.length > 0
+                    )
+                );
+                if (catalogWithGenres) {
+                    const genreExtra = catalogWithGenres.extraSupported.find(e => e.name === 'genre');
+                    if (genreExtra.options && genreExtra.options.length > 0) {
+                        genreOpts = genreExtra.options;
+                        console.log(`[AddonBuilder] Using external addon genres from parent for ${currentListId}:`, genreOpts);
+                    }
+                }
+            }
+            
+            catalogExtraForThisList.push({
+                name: "genre",
+                options: genreOpts,
+                isRequired: isHidden
+            });
         }
-        catalogExtraForThisList.push({
-            name: "genre",
-            options: genreOpts,
-            isRequired: isHidden
-        });
-    }
 
     const baseCatalogProps = {
         extra: catalogExtraForThisList,
@@ -473,6 +512,14 @@ async function createAddon(userConfig) {
 
     if (isImportedSubCatalog) {
         const manifestCatalogType = customMediaTypeNames?.[currentListId] || listSourceInfo.type;
+        
+        console.log(`[AddonBuilder] ===== IMPORTED SUB-CATALOG DEBUG =====`);
+        console.log(`[AddonBuilder] Processing imported sub-catalog ${currentListId}`);
+        console.log(`[AddonBuilder] listSourceInfo.type: "${listSourceInfo.type}"`);
+        console.log(`[AddonBuilder] customMediaTypeNames[${currentListId}]: "${customMediaTypeNames?.[currentListId]}"`);
+        console.log(`[AddonBuilder] manifestCatalogType (final): "${manifestCatalogType}"`);
+        console.log(`[AddonBuilder] Creating catalog with type: "${manifestCatalogType}"`);
+        console.log(`[AddonBuilder] ===================================`);
 
         if (!manifestCatalogType) {
           console.warn(`[AIOLists AddonBuilder] Manifest catalog type for imported sub-catalog ${currentListId} is undefined (source type: ${listSourceInfo.type}). Skipping.`);
@@ -483,12 +530,18 @@ async function createAddon(userConfig) {
           return;
         }
 
-        tempGeneratedCatalogs.push({
+        const finalCatalog = {
             id: currentListId,
             type: manifestCatalogType,
             name: displayName,
             ...baseCatalogProps
-        });
+        };
+        
+        console.log(`[AddonBuilder] ===== FINAL CATALOG CREATED =====`);
+        console.log(`[AddonBuilder] Final catalog object:`, JSON.stringify(finalCatalog, null, 2));
+        console.log(`[AddonBuilder] ===============================`);
+        
+        tempGeneratedCatalogs.push(finalCatalog);
         return; 
     }
 
@@ -554,15 +607,30 @@ async function createAddon(userConfig) {
     } else { // Fallback if source type is unknown or properties missing
         sourceHasMovies = listSourceInfo.hasMovies || false;
         sourceHasShows = listSourceInfo.hasShows || false;
+        // For external addons with TV/channel content, check for those types
+        const sourceHasChannels = listSourceInfo.hasChannels || false;
+        const sourceHasTv = listSourceInfo.hasTv || false;
+        const sourceHasContent = listSourceInfo.hasContent || false;
+        
+        // If this is a TV/channel addon, we don't treat it as movies/shows
+        if (sourceHasChannels || sourceHasTv || (sourceHasContent && !sourceHasMovies && !sourceHasShows)) {
+            // This appears to be a TV channel addon - don't force it into movie/series categorization
+            console.log(`[AddonBuilder] Detected TV/channel content for ${currentListId}: hasChannels=${sourceHasChannels}, hasTv=${sourceHasTv}, hasContent=${sourceHasContent}`);
+        }
     }
 
     const sourceIsStructurallyMergeable = sourceHasMovies && sourceHasShows;
     const customUserDefinedType = customMediaTypeNames?.[currentListId];
     
-    if (!sourceHasMovies && !sourceHasShows && !customUserDefinedType) {
+    // Check for any content (including TV/channel content)
+    const sourceHasChannels = listSourceInfo.hasChannels || false;
+    const sourceHasTv = listSourceInfo.hasTv || false;
+    const sourceHasContent = listSourceInfo.hasContent || false;
+    
+    if (!sourceHasMovies && !sourceHasShows && !sourceHasChannels && !sourceHasTv && !sourceHasContent && !customUserDefinedType) {
         // If no content and no custom type, don't add catalog (unless it's explicitly an 'all' type list with no content yet)
         if (listSourceInfo.type !== 'all' || (listSourceInfo.type === 'all' && (listSourceInfo.hasMovies === false && listSourceInfo.hasShows === false))) {
-             console.warn(`[AIOLists AddonBuilder] List ${currentListId} ('${displayName}') has no movie/series content and no custom type. Skipping manifest entry.`);
+             console.warn(`[AIOLists AddonBuilder] List ${currentListId} ('${displayName}') has no content and no custom type. Skipping manifest entry.`);
              return;
         }
     }
@@ -589,10 +657,27 @@ async function createAddon(userConfig) {
         if (customUserDefinedType) {
              tempGeneratedCatalogs.push({ id: currentListId, type: customUserDefinedType, name: displayName, ...baseCatalogProps });
         } else {
-            if (sourceHasMovies) {
+            // For external addon catalogs, always preserve the original type from the addon manifest
+            // Check if this is an external addon catalog by looking for the type in listSourceInfo
+            const isExternalAddonCatalog = listSourceInfo.type && !['movie', 'series'].includes(listSourceInfo.type);
+            
+            if (isExternalAddonCatalog) {
+                // Use the original type declared in the external addon (tv, channel, etc.)
+                console.log(`[AddonBuilder] Preserving original external addon type: ${listSourceInfo.type} for ${currentListId}`);
+                tempGeneratedCatalogs.push({ id: currentListId, type: listSourceInfo.type, name: displayName, ...baseCatalogProps });
+            } else if (sourceHasMovies) {
                 tempGeneratedCatalogs.push({ id: currentListId, type: 'movie', name: displayName, ...baseCatalogProps });
             } else if (sourceHasShows) {
                 tempGeneratedCatalogs.push({ id: currentListId, type: 'series', name: displayName, ...baseCatalogProps });
+            } else if (sourceHasChannels || sourceHasTv) {
+                // Use the original type from the external addon (tv, channel, etc.)
+                const originalType = listSourceInfo.type || 'tv';
+                console.log(`[AddonBuilder] Creating catalog with original TV/channel type: ${originalType} for ${currentListId}`);
+                tempGeneratedCatalogs.push({ id: currentListId, type: originalType, name: displayName, ...baseCatalogProps });
+            } else if (sourceHasContent && listSourceInfo.type && !['movie', 'series'].includes(listSourceInfo.type)) {
+                // For other content types (tv, channel, etc.), use the original type
+                console.log(`[AddonBuilder] Creating catalog with original content type: ${listSourceInfo.type} for ${currentListId}`);
+                tempGeneratedCatalogs.push({ id: currentListId, type: listSourceInfo.type, name: displayName, ...baseCatalogProps });
             } else if (listSourceInfo.type === 'all' && !customUserDefinedType) {
                 tempGeneratedCatalogs.push({ id: currentListId, type: 'all', name: displayName, ...baseCatalogProps });
             }
@@ -865,6 +950,8 @@ async function createAddon(userConfig) {
       for (const catalog_from_imported_addon of addon.catalogs) {
         const catalogIdForManifest = String(catalog_from_imported_addon.id); 
         
+        console.log(`[AddonBuilder] Processing external addon catalog: ${catalogIdForManifest}, originalType: ${catalog_from_imported_addon.type}`);
+        
         if (removedListsSet.has(catalogIdForManifest) || hiddenListsSet.has(catalogIdForManifest)) {
             continue;
         }
@@ -876,6 +963,14 @@ async function createAddon(userConfig) {
           extraRequired: catalog_from_imported_addon.extraRequired,
           // No source needed here, isImportedSubCatalog=true implies it
         };
+        
+        console.log(`[AddonBuilder] ===== TV TYPE DEBUG =====`);
+        console.log(`[AddonBuilder] Raw catalog from addon:`, JSON.stringify(catalog_from_imported_addon, null, 2));
+        console.log(`[AddonBuilder] subCatalogData.type: "${subCatalogData.type}"`);
+        console.log(`[AddonBuilder] catalogIdForManifest: "${catalogIdForManifest}"`);
+        console.log(`[AddonBuilder] isImportedSubCatalog: true`);
+        console.log(`[AddonBuilder] customMediaTypeNames for this catalog:`, userConfig.customMediaTypeNames?.[catalogIdForManifest]);
+        console.log(`[AddonBuilder] ===========================`);
         await processListForManifest(subCatalogData, catalogIdForManifest, true, addon);
       }
     }
@@ -1231,7 +1326,7 @@ async function createAddon(userConfig) {
     console.log(`[CATALOG PERF] Stremio format conversion completed in ${convertEndTime - convertStartTime}ms`);
 
     // Apply type filtering
-    if (type === 'movie' || type === 'series') {
+    if (type === 'movie' || type === 'series' || type === 'tv' || type === 'channel') {
         const beforeFilter = metas.length;
         metas = metas.filter(meta => meta.type === type);
         console.log(`[CATALOG PERF] Type filter (${type}): ${beforeFilter} -> ${metas.length} items`);
@@ -1257,13 +1352,124 @@ async function createAddon(userConfig) {
   });
 
   builder.defineMetaHandler(async ({ type, id }) => {
-    // Support both IMDB IDs (tt) and TMDB IDs (tmdb:)
-    if (!id.startsWith('tt') && !id.startsWith('tmdb:')) {
+    console.log(`[MetaHandler] ===== META REQUEST DEBUG =====`);
+    console.log(`[MetaHandler] Request for type: "${type}", id: "${id}"`);
+    console.log(`[MetaHandler] Available imported addons: ${Object.keys(userConfig.importedAddons || {}).length}`);
+    
+    // Support IMDB IDs (tt), TMDB IDs (tmdb:), and other IDs for TV channels
+    // TV channels often have custom ID formats that don't follow tt/tmdb patterns
+    const isTraditionalContent = id.startsWith('tt') || id.startsWith('tmdb:');
+    const isTvChannelContent = type === 'tv' || type === 'channel';
+    
+    console.log(`[MetaHandler] isTraditionalContent: ${isTraditionalContent}, isTvChannelContent: ${isTvChannelContent}`);
+    
+    // Allow all TV/channel content through, regardless of ID format
+    // Also allow traditional content through
+    if (!isTraditionalContent && !isTvChannelContent) {
+      console.log(`[MetaHandler] Rejecting request - not traditional content and not TV/channel`);
       return Promise.resolve({ meta: null });
     }
     
     try {
-      // Extract metadata config from userConfig
+      // For TV/channel content, we need a different approach since they don't use IMDB/TMDB metadata
+      if (isTvChannelContent && !isTraditionalContent) {
+        // For TV channels, try to find the meta from the original external addon response
+        console.log(`[MetaHandler] Processing TV/channel content: ${id} (type: ${type})`);
+        
+        // Look for this content in imported addons
+        for (const addon of Object.values(userConfig.importedAddons || {})) {
+          console.log(`[MetaHandler] Checking addon: ${addon.name}, types: [${addon.types?.join(', ') || 'none'}], resources: [${addon.resources?.join(', ') || 'none'}]`);
+          
+          // Skip addons that don't support the requested type
+          if (addon.types && addon.types.length > 0 && !addon.types.includes(type)) {
+            console.log(`[MetaHandler] Addon ${addon.name} doesn't support type ${type}, skipping`);
+            continue;
+          }
+          
+          if (addon.catalogs) {
+            for (const catalog of addon.catalogs) {
+              try {
+                // First check if the addon provides meta resources, if so use direct API call
+                if (addon.resources && addon.resources.includes('meta')) {
+                  const metaUrl = `${addon.apiBaseUrl}meta/${type}/${encodeURIComponent(id)}.json`;
+                  console.log(`[MetaHandler] Requesting metadata from: ${metaUrl}`);
+                  
+                  const axios = require('axios');
+                  const metaResponse = await axios.get(metaUrl, { 
+                    timeout: 10000,
+                    headers: {
+                      'User-Agent': 'AIOLists-Stremio-Addon/1.0'
+                    }
+                  });
+                  
+                  if (metaResponse.data && metaResponse.data.meta) {
+                    console.log(`[MetaHandler] Found metadata for ${id} from ${addon.name} API`);
+                    return Promise.resolve({
+                      meta: {
+                        ...metaResponse.data.meta,
+                        // Ensure required Stremio fields
+                        behaviorHints: metaResponse.data.meta.behaviorHints || {
+                          hasScheduledVideos: false,
+                          defaultVideoId: null
+                        }
+                      },
+                      cacheMaxAge: 12 * 60 * 60 // 12 hours cache
+                    });
+                  }
+                } else {
+                  // Fallback: Search through catalog data
+                  const externalResult = await fetchExternalAddonItems(
+                    catalog.originalId, 
+                    catalog.originalType, 
+                    addon, 
+                    0, 
+                    null, 
+                    null, 
+                    userConfig
+                  );
+                  
+                  if (externalResult && externalResult.metas) {
+                    const foundMeta = externalResult.metas.find(meta => meta.id === id);
+                    if (foundMeta) {
+                      console.log(`[MetaHandler] Found TV/channel meta for ${id} from catalog data`);
+                      return Promise.resolve({ 
+                        meta: {
+                          ...foundMeta,
+                          // Ensure required Stremio fields
+                          behaviorHints: foundMeta.behaviorHints || {
+                            hasScheduledVideos: false,
+                            defaultVideoId: null
+                          }
+                        },
+                        cacheMaxAge: 12 * 60 * 60 // 12 hours cache
+                      });
+                    }
+                  }
+                }
+              } catch (error) {
+                console.warn(`[MetaHandler] Error searching for TV/channel meta in addon ${addon.name}:`, error.message);
+                continue;
+              }
+            }
+          }
+        }
+        
+        // If not found in any addon, return basic meta
+        return Promise.resolve({ 
+          meta: { 
+            id, 
+            type, 
+            name: "Channel Details",
+            description: "TV Channel",
+            behaviorHints: {
+              hasScheduledVideos: false,
+              defaultVideoId: null
+            }
+          }
+        });
+      }
+      
+      // Extract metadata config from userConfig for traditional content
       const metadataSource = userConfig.metadataSource || 'cinemeta';
       const hasTmdbOAuth = !!(userConfig.tmdbSessionId && userConfig.tmdbAccountId);
       const tmdbLanguage = userConfig.tmdbLanguage || 'en-US';
@@ -1526,6 +1732,81 @@ async function createAddon(userConfig) {
       });
     }
   });
+
+  // Add stream handler if external addons provide stream resources
+  if (hasExternalStreamProviders) {
+    builder.defineStreamHandler(async ({ type, id }) => {
+      console.log(`[StreamHandler] ===== STREAM REQUEST DEBUG =====`);
+      console.log(`[StreamHandler] Stream request for type: "${type}", id: "${id}"`);
+      console.log(`[StreamHandler] Available imported addons: ${Object.keys(userConfig.importedAddons || {}).length}`);
+      
+      try {
+        // Look for this content in imported addons that provide stream resources
+        for (const addon of Object.values(userConfig.importedAddons || {})) {
+          console.log(`[StreamHandler] Checking addon: ${addon.name}, types: [${addon.types?.join(', ') || 'none'}], resources: [${addon.resources?.join(', ') || 'none'}]`);
+          
+          if (!addon.resources || !addon.resources.includes('stream')) {
+            console.log(`[StreamHandler] Addon ${addon.name} doesn't provide stream resources, skipping`);
+            continue; // Skip addons that don't provide streams
+          }
+          
+          // Skip addons that don't support the requested type
+          if (addon.types && addon.types.length > 0 && !addon.types.includes(type)) {
+            console.log(`[StreamHandler] Addon ${addon.name} doesn't support type ${type}, skipping`);
+            continue;
+          }
+          
+          try {
+            // Check if this addon handles this ID prefix
+            // For TV/channel content, be more permissive since they often have custom ID formats
+            const isTvChannelRequest = type === 'tv' || type === 'channel';
+            const handlesThisId = isTvChannelRequest || 
+                                 !addon.idPrefixes || 
+                                 addon.idPrefixes.length === 0 || 
+                                 addon.idPrefixes.some(prefix => id.startsWith(prefix));
+            
+            if (!handlesThisId) {
+              console.log(`[StreamHandler] Addon ${addon.name} doesn't handle ID prefix for ${id} (type: ${type})`);
+              continue;
+            }
+            
+            // Directly request streams from the addon
+            const streamUrl = `${addon.apiBaseUrl}stream/${type}/${encodeURIComponent(id)}.json`;
+            console.log(`[StreamHandler] Requesting streams from: ${streamUrl}`);
+            
+            const axios = require('axios');
+            const streamResponse = await axios.get(streamUrl, { 
+              timeout: 15000,
+              headers: {
+                'User-Agent': 'AIOLists-Stremio-Addon/1.0'
+              }
+            });
+            
+            if (streamResponse.data && streamResponse.data.streams) {
+              console.log(`[StreamHandler] Found ${streamResponse.data.streams.length} streams for ${id} from ${addon.name}`);
+              return Promise.resolve({
+                streams: streamResponse.data.streams,
+                cacheMaxAge: 60 * 60 // 1 hour cache for streams
+              });
+            }
+          } catch (error) {
+            console.warn(`[StreamHandler] Error getting streams from addon ${addon.name} for ${id}:`, error.message);
+            continue;
+          }
+        }
+        
+        // No streams found
+        console.log(`[StreamHandler] No streams found for ${type}/${id}`);
+        return Promise.resolve({ streams: [] });
+        
+      } catch (error) {
+        console.error(`[StreamHandler] Error in stream handler for ${id}:`, error);
+        return Promise.resolve({ streams: [] });
+      }
+    });
+    
+    console.log(`[ADDON BUILDER] Added stream handler for external addon integration`);
+  }
 
   const endTime = Date.now();
   console.log(`[ADDON BUILDER] Addon creation completed in ${endTime - startTime}ms`);

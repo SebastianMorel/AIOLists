@@ -57,11 +57,9 @@ class ExternalAddon {
         const originalCatalogIdFromSource = catalog.id;
         const originalCatalogType = catalog.type;
         
+        // For external addons, trust the original type declaration from the addon manifest
+        // External addon authors know what type their content is
         let stremioFinalCatalogType = originalCatalogType;
-
-        if (originalCatalogType === 'tv') {
-            stremioFinalCatalogType = 'series';
-        }
 
         const hasSearchRequirement = (catalog.extra || []).some(e => e.name === 'search' && e.isRequired);
         if (hasSearchRequirement) {
@@ -84,12 +82,23 @@ class ExternalAddon {
         const originalExtra = catalog.extraSupported || catalog.extra || [];
         originalExtra.forEach(extraItem => {
             if (extraItem.name === "genre") {
-                processedExtraSupported.push({ name: "genre" });
+                // Preserve genre options from the external addon manifest
+                processedExtraSupported.push({ 
+                    name: "genre", 
+                    options: extraItem.options || [] 
+                });
             } else {
                 processedExtraSupported.push(extraItem);
             }
         });
-        return {
+        console.log(`[ExternalAddon] ===== CATALOG PROCESSING DEBUG =====`);
+        console.log(`[ExternalAddon] Original catalog from manifest:`, JSON.stringify(catalog, null, 2));
+        console.log(`[ExternalAddon] originalCatalogType: "${originalCatalogType}"`);
+        console.log(`[ExternalAddon] stremioFinalCatalogType: "${stremioFinalCatalogType}"`);
+        console.log(`[ExternalAddon] aiolistsUniqueCatalogId: "${aiolistsUniqueCatalogId}"`);
+        console.log(`[ExternalAddon] ===================================`);
+        
+        const processedCatalog = {
           id: aiolistsUniqueCatalogId,
           originalId: originalCatalogIdFromSource,
           originalManifestId: this.manifest.id.trim(),
@@ -99,6 +108,12 @@ class ExternalAddon {
           extraSupported: processedExtraSupported,
           extraRequired: catalog.extraRequired || (catalog.extra || []).filter(e => e.isRequired)
         };
+        
+        console.log(`[ExternalAddon] ===== FINAL PROCESSED CATALOG =====`);
+        console.log(`[ExternalAddon] Processed catalog:`, JSON.stringify(processedCatalog, null, 2));
+        console.log(`[ExternalAddon] ===============================`);
+        
+        return processedCatalog;
       }).filter(catalog => catalog !== null);
 
       let tentativeLogo = this.manifest.logo;
@@ -148,6 +163,7 @@ class ExternalAddon {
         catalogs: processedCatalogs,
         types: this.manifest.types || [],
         resources: this.manifest.resources || [],
+        idPrefixes: this.manifest.idPrefixes || [],
         isAnime: this.detectAnimeCatalogs()
       };
     } catch (error) {
@@ -192,7 +208,7 @@ async function fetchExternalAddonItems(targetOriginalId, targetOriginalType, sou
   try {
     if (!sourceAddonConfig || !sourceAddonConfig.apiBaseUrl || !sourceAddonConfig.catalogs) {
       console.error('[AIOLists ExternalAddon] Invalid source addon configuration for fetching items. Config:', sourceAddonConfig);
-      return { metas: [], hasMovies: false, hasShows: false };
+      return { metas: [], hasMovies: false, hasShows: false, hasChannels: false, hasContent: false };
     }
     const catalogEntry = sourceAddonConfig.catalogs.find(
       c => c.originalId === targetOriginalId && c.originalType === targetOriginalType
@@ -201,7 +217,7 @@ async function fetchExternalAddonItems(targetOriginalId, targetOriginalType, sou
       const fallbackCatalogEntry = sourceAddonConfig.catalogs.find(c => c.id === targetOriginalId && c.originalType === targetOriginalType);
       if (!fallbackCatalogEntry) {
         console.warn(`[AIOLists ExternalAddon] Catalog not found for originalId: ${targetOriginalId}, type: ${targetOriginalType} in addon ${sourceAddonConfig.name}`);
-        return { metas: [], hasMovies: false, hasShows: false };
+        return { metas: [], hasMovies: false, hasShows: false, hasChannels: false, hasContent: false };
       }
     }
     const tempExternalAddon = new ExternalAddon(sourceAddonConfig.apiBaseUrl); 
@@ -210,7 +226,7 @@ async function fetchExternalAddonItems(targetOriginalId, targetOriginalType, sou
     const response = await axios.get(attemptedUrl, { timeout: 20000 });
     if (!response.data || !Array.isArray(response.data.metas)) {
       console.error(`[AIOLists ExternalAddon] Invalid metadata response from ${attemptedUrl}: Data or metas array missing. Response:`, response.data);
-      return { metas: [], hasMovies: false, hasShows: false };
+      return { metas: [], hasMovies: false, hasShows: false, hasChannels: false, hasContent: false };
     }
     let metasFromExternal = response.data.metas;
     if (sourceAddonConfig && typeof sourceAddonConfig.name === 'string' && sourceAddonConfig.name.toLowerCase().includes('trakt up next')) {
@@ -237,7 +253,19 @@ async function fetchExternalAddonItems(targetOriginalId, targetOriginalType, sou
     }
     const hasMovies = finalMetas.some(m => m.type === 'movie');
     const hasShows = finalMetas.some(m => m.type === 'series');
-    return { metas: finalMetas, hasMovies, hasShows };
+    const hasChannels = finalMetas.some(m => m.type === 'tv' || m.type === 'channel');
+    const hasTv = finalMetas.some(m => m.type === 'tv');
+    
+    return { 
+        metas: finalMetas, 
+        hasMovies, 
+        hasShows, 
+        hasChannels,
+        hasTv,
+        // For compatibility with existing code that checks hasMovies/hasShows
+        // Also return true for hasContent if we have any type of content
+        hasContent: finalMetas.length > 0
+    };
   } catch (error) {
     console.error(`[AIOLists ExternalAddon] Error fetching items for external catalog ID '${targetOriginalId}' (type: '${targetOriginalType}', from addon '${sourceAddonConfig?.name}'). Attempted URL: ${attemptedUrl}. Error:`, error.message);
     if (error.response) {
@@ -245,7 +273,7 @@ async function fetchExternalAddonItems(targetOriginalId, targetOriginalType, sou
     } else {
         console.error("[AIOLists ExternalAddon] Error stack:", error.stack);
     }
-    return { metas: [], hasMovies: false, hasShows: false };
+    return { metas: [], hasMovies: false, hasShows: false, hasChannels: false, hasContent: false };
   }
 }
 

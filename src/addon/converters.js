@@ -12,15 +12,22 @@ async function convertToStremioFormat(listContent, rpdbApiKey = null, metadataCo
 
   if (listContent.allItems && Array.isArray(listContent.allItems)) {
     itemsToProcess = listContent.allItems.map(item => {
-        // Support both IMDB IDs (tt) and TMDB IDs (tmdb:)
+        // Support IMDB IDs (tt), TMDB IDs (tmdb:), and custom IDs for TV channels
         let itemId = item.id;
         let imdbId = item.imdb_id || item.imdbid;
         
-        // If we have a specific ID (could be tmdb: format), use it
-        if (itemId && (itemId.startsWith('tt') || itemId.startsWith('tmdb:'))) {
-          // ID is already in correct format
+        // Handle different ID formats based on content type
+        if (item.type === 'tv' || item.type === 'channel') {
+          // For TV/channel content, use the ID as-is (don't require IMDB format)
+          if (!itemId) {
+            console.warn('[Converter] TV/channel item missing ID:', item);
+            return null;
+          }
+          // Keep the original ID format for TV channels
+        } else if (itemId && (itemId.startsWith('tt') || itemId.startsWith('tmdb:'))) {
+          // Traditional content with proper ID format
         } else {
-          // Fallback to IMDB ID processing
+          // Fallback to IMDB ID processing for traditional content
           if (imdbId && !imdbId.startsWith('tt')) imdbId = `tt${imdbId}`;
           if (!imdbId) return null;
           itemId = imdbId;
@@ -152,6 +159,11 @@ async function convertToStremioFormat(listContent, rpdbApiKey = null, metadataCo
     
     itemsToProcess.forEach((item, index) => {
       let imdbId = null;
+      
+      // Skip RPDB processing for TV/channel content as they don't have IMDB IDs
+      if (item.type === 'tv' || item.type === 'channel') {
+        return; // Skip RPDB poster fetching for TV channels
+      }
       
       // Priority 1: Direct IMDB ID in item.id
       if (item.id && item.id.startsWith('tt')) {
