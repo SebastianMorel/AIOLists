@@ -1757,6 +1757,15 @@ module.exports = function(router) {
     if (req.userConfig.apiKey) {
         const mdbLists = await fetchAllMDBLists(req.userConfig.apiKey);
         allUserLists.push(...mdbLists.map(l => ({...l, source: 'mdblist'})));
+    } else {
+        // Even without an API key, we should provide the watchlist
+        allUserLists.push({
+            id: 'watchlist',
+            name: 'My Watchlist',
+            listType: 'W',
+            isWatchlist: true,
+            source: 'mdblist'
+        });
     }
 
     if (req.userConfig.traktAccessToken) {
