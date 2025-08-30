@@ -1,7 +1,7 @@
 // src/integrations/trakt.js
 const axios = require('axios');
 const { ITEMS_PER_PAGE, TRAKT_CLIENT_ID, TRAKT_REDIRECT_URI, TRAKT_CONCURRENT_REQUESTS } = require('../config');
-const { getTraktTokens, saveTraktTokens } = require('../utils/remoteStorage');
+const { getTraktTokens, saveTraktTokens, clearTraktTokens, debugTraktTokens } = require('../utils/remoteStorage');
 
 const TRAKT_API_URL = 'https://api.trakt.tv';
 
@@ -62,17 +62,18 @@ async function refreshTraktToken(userConfig) {
       return true;
     }
     return false;
-  } catch (error) {
-    if (error.response?.status === 401) {
-      userConfig.traktAccessToken = null;
-      userConfig.traktRefreshToken = null;
-      userConfig.traktExpiresAt = null;
-      if (hasRedisConfig(userConfig) && userConfig.traktUuid) {
-        await saveTraktTokens(userConfig, { accessToken: null, refreshToken: null, expiresAt: null });
-      }
+    } catch (error) {
+        if (error.response?.status === 401) {
+            userConfig.traktAccessToken = null;
+            userConfig.traktRefreshToken = null;
+            userConfig.traktExpiresAt = null;
+            // Clear tokens from Redis instead of saving null values
+            if (hasRedisConfig(userConfig) && userConfig.traktUuid) {
+                await clearTraktTokens(userConfig);
+            }
+        }
+        return false;
     }
-    return false;
-  }
 }
 
 // Helper function to check if Redis (either type) is configured
@@ -83,31 +84,57 @@ function hasRedisConfig(userConfig) {
 }
 
 async function initTraktApi(userConfig) {
+  console.log('[TRAKT] initTraktApi called with config:', {
+    hasRedisHost: !!userConfig.redisHost,
+    hasUpstashUrl: !!userConfig.upstashUrl,
+    hasTraktUuid: !!userConfig.traktUuid,
+    hasLocalAccessToken: !!userConfig.traktAccessToken,
+    hasLocalRefreshToken: !!userConfig.traktRefreshToken,
+    localExpiresAt: userConfig.traktExpiresAt
+  });
 
   
   // If Redis credentials are provided, use them as the source of truth
   if (hasRedisConfig(userConfig) && userConfig.traktUuid) {
+    console.log('[TRAKT] Redis config available, attempting to load tokens from Redis');
     const tokens = await getTraktTokens(userConfig);
-    if (tokens) {
+    if (tokens && tokens.accessToken && tokens.refreshToken) {
+      console.log('[TRAKT] Valid tokens loaded from Redis');
       userConfig.traktAccessToken = tokens.accessToken;
       userConfig.traktRefreshToken = tokens.refreshToken;
       userConfig.traktExpiresAt = tokens.expiresAt;
 
-      if (Date.now() >= new Date(userConfig.traktExpiresAt).getTime()) {
+      // Check if tokens are expired - be more defensive with date handling
+      if (tokens.expiresAt && typeof tokens.expiresAt === 'number' && Date.now() >= tokens.expiresAt) {
+        console.log('[TRAKT] Tokens retrieved from Redis are expired, attempting refresh');
         return await refreshTraktToken(userConfig);
       }
+      console.log('[TRAKT] Valid tokens retrieved from Redis');
       return true;
+    } else {
+      console.log('[TRAKT] No valid tokens found in Redis');
     }
+  } else {
+    console.log('[TRAKT] No Redis config or traktUuid available, checking local tokens');
   }
 
   // Fallback for non-persistent flow (token is in the config hash)
   if (userConfig.traktAccessToken && userConfig.traktExpiresAt) {
-    if (Date.now() >= new Date(userConfig.traktExpiresAt).getTime()) {
+    console.log('[TRAKT] Local tokens available, checking expiration');
+    // Check if tokens are expired - be more defensive with date handling  
+    const expiresAt = typeof userConfig.traktExpiresAt === 'number' ? 
+      userConfig.traktExpiresAt : 
+      new Date(userConfig.traktExpiresAt).getTime();
+      
+    if (Date.now() >= expiresAt) {
+      console.log('[TRAKT] Local tokens are expired, attempting refresh');
       return await refreshTraktToken(userConfig);
     }
+    console.log('[TRAKT] Valid local tokens found');
     return true;
   }
 
+  console.log('[TRAKT] No authentication available');
   return false;
 }
 

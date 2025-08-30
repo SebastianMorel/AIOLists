@@ -1426,7 +1426,69 @@ module.exports = function(router) {
     }
 });
 
-  router.post('/:configHash/upstash/check', async (req, res) => {
+router.post('/:configHash/redis/debug', async (req, res) => {
+    try {
+        const { debugTraktTokens } = require('../utils/remoteStorage');
+        console.log('[API] Redis debug endpoint called');
+        
+        if (!req.userConfig.traktUuid) {
+            return res.json({ 
+                success: false, 
+                error: 'No traktUuid available for debugging',
+                userConfigKeys: Object.keys(req.userConfig)
+            });
+        }
+        
+        // Capture console logs for the debug output
+        const originalLog = console.log;
+        const originalError = console.error;
+        const logs = [];
+        
+        console.log = (...args) => {
+            logs.push({ type: 'log', message: args.join(' '), timestamp: new Date().toISOString() });
+            originalLog(...args);
+        };
+        
+        console.error = (...args) => {
+            logs.push({ type: 'error', message: args.join(' '), timestamp: new Date().toISOString() });
+            originalError(...args);
+        };
+        
+        try {
+            await debugTraktTokens(req.userConfig);
+            
+            // Restore original console methods
+            console.log = originalLog;
+            console.error = originalError;
+            
+            res.json({ 
+                success: true, 
+                debugLogs: logs,
+                traktUuid: req.userConfig.traktUuid,
+                redisConfig: {
+                    host: req.userConfig.redisHost,
+                    port: req.userConfig.redisPort,
+                    database: req.userConfig.redisDatabase
+                }
+            });
+        } catch (debugError) {
+            // Restore original console methods
+            console.log = originalLog;
+            console.error = originalError;
+            
+            res.json({ 
+                success: false, 
+                error: debugError.message,
+                debugLogs: logs 
+            });
+        }
+    } catch (error) {
+        console.error('[API] Redis debug error:', error);
+        res.status(500).json({ success: false, error: 'Debug failed: ' + error.message });
+    }
+});
+
+router.post('/:configHash/upstash/check', async (req, res) => {
     const { upstashUrl, upstashToken } = req.body;
     try {
         const { Redis } = require('@upstash/redis');
