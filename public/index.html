@@ -131,6 +131,41 @@
                       </div>
                   </div>
               </div>
+              <div id="redisContainer" class="hidden">
+                  <div class="redis-header">
+                      <p class="info-text">
+                          For a persistent Trakt connection provide connection details to your Redis instance.
+                          <a href="https://redis.io/docs/install/" target="_blank" rel="noopener noreferrer" class="label-link-icon">Setup Guide</a>
+                      </p>
+                      <button id="closeRedisBtn" class="remove-list-button action-icon" title="Close">❌</button>
+                  </div>
+                  <div id="redisForm">
+                      <div class="form-group">
+                          <label for="redisHost">Redis Host:</label>
+                          <div class="input-container">
+                              <input type="text" id="redisHost" placeholder="localhost" value="localhost">
+                          </div>
+                      </div>
+                      <div class="form-group">
+                          <label for="redisPort">Redis Port:</label>
+                          <div class="input-container">
+                              <input type="number" id="redisPort" placeholder="6379" value="6379" min="1" max="65535">
+                          </div>
+                      </div>
+                      <div class="form-group">
+                          <label for="redisPassword">Redis Password (optional):</label>
+                          <div class="input-container">
+                              <input type="password" id="redisPassword" placeholder="Leave empty if no password">
+                          </div>
+                      </div>
+                      <div class="form-group">
+                          <label for="redisDatabase">Redis Database (optional):</label>
+                          <div class="input-container">
+                              <input type="number" id="redisDatabase" placeholder="0" value="0" min="0" max="15">
+                          </div>
+                      </div>
+                  </div>
+              </div>
           </div>
           <hr style="border: 0; border-top: 1px solid #eee; margin: 8px 0;">
           <div id="tmdbConnection" class="connection-item">

@@ -1286,6 +1286,12 @@ button:active, .action-btn:active, .trakt-login-btn:active, .stremio-refresh-btn
   align-items: center;
 }
 
+.redis-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
 .persistence-action-link {
   color: #8E5AF7;
   text-decoration: none;

@@ -258,6 +258,10 @@ document.addEventListener('DOMContentLoaded', function() {
         traktUuid: null,
         upstashUrl: '',
         upstashToken: '',
+        redisHost: '',
+        redisPort: 6379,
+        redisPassword: '',
+        redisDatabase: 0,
         enableRandomListFeature: defaultConfig.enableRandomListFeature,
         randomMDBListUsernames: [...defaultConfig.randomMDBListUsernames],
         availableSortOptions: [...defaultConfig.availableSortOptions],
@@ -313,6 +317,13 @@ document.addEventListener('DOMContentLoaded', function() {
     upstashTokenInput: document.getElementById('upstashToken'),
     upstashForm: document.getElementById('upstashForm'),
     closeUpstashBtn: document.getElementById('closeUpstashBtn'),
+    redisContainer: document.getElementById('redisContainer'),
+    redisHostInput: document.getElementById('redisHost'),
+    redisPortInput: document.getElementById('redisPort'),
+    redisPasswordInput: document.getElementById('redisPassword'),
+    redisDatabaseInput: document.getElementById('redisDatabase'),
+    redisForm: document.getElementById('redisForm'),
+    closeRedisBtn: document.getElementById('closeRedisBtn'),
     universalImportInput: document.getElementById('universalImportInput'),
     importedAddonsContainer: document.getElementById('importedAddons'),
     addonsList: document.getElementById('addonsList'),
@@ -731,6 +742,13 @@ document.addEventListener('DOMContentLoaded', function() {
     elements.closeUpstashBtn.addEventListener('click', () => {
         elements.upstashContainer.classList.add('hidden');
     });
+    elements.redisHostInput.addEventListener('input', handleRedisInput);
+    elements.redisPortInput.addEventListener('input', handleRedisInput);
+    elements.redisPasswordInput.addEventListener('input', handleRedisInput);
+    elements.redisDatabaseInput.addEventListener('input', handleRedisInput);
+    elements.closeRedisBtn.addEventListener('click', () => {
+        elements.redisContainer.classList.add('hidden');
+    });
     elements.submitTraktPin?.addEventListener('click', handleTraktPinSubmit);
     elements.traktPin?.addEventListener('keypress', function(e) { if (e.key === 'Enter') handleTraktPinSubmit(); });
     elements.cancelTraktPin?.addEventListener('click', handleTraktPinCancel);
@@ -1114,6 +1132,10 @@ document.addEventListener('DOMContentLoaded', function() {
       
       elements.upstashUrlInput.value = state.userConfig.upstashUrl || '';
       elements.upstashTokenInput.value = state.userConfig.upstashToken || '';
+      elements.redisHostInput.value = state.userConfig.redisHost || '';
+      elements.redisPortInput.value = state.userConfig.redisPort || 6379;
+      elements.redisPasswordInput.value = state.userConfig.redisPassword || '';
+      elements.redisDatabaseInput.value = state.userConfig.redisDatabase || 0;
       
       const mdblistApiKey = state.userConfig.apiKey;
       const rpdbApiKey = state.userConfig.rpdbApiKey;
@@ -1168,7 +1190,7 @@ document.addEventListener('DOMContentLoaded', function() {
           showNotification('connections', 'Trakt connection expired. Please reconnect.', 'error', true);
       }
 
-      const isTraktConnected = !!(state.userConfig.traktAccessToken || (state.userConfig.upstashUrl && state.userConfig.traktUuid));
+      const isTraktConnected = !!(state.userConfig.traktAccessToken || ((state.userConfig.upstashUrl || state.userConfig.redisHost) && state.userConfig.traktUuid));
       updateTraktUI(isTraktConnected, state.userConfig.traktUsername);
       
       const isTmdbConnected = !!state.userConfig.tmdbSessionId;
@@ -1276,6 +1298,101 @@ document.addEventListener('DOMContentLoaded', function() {
       console.error('Upstash validation error:', error);
       updatePersistenceStatus(false);
       showNotification('connections', `Upstash validation error: ${error.message}`, 'error', true);
+    }
+  }
+
+  function handleRedisInput() {
+    if (state.redisSaveTimeout) clearTimeout(state.redisSaveTimeout);
+    state.redisSaveTimeout = setTimeout(() => {
+        const redisHost = elements.redisHostInput.value.trim();
+        const redisPort = elements.redisPortInput.value.trim();
+        const redisPassword = elements.redisPasswordInput.value.trim();
+        const redisDatabase = elements.redisDatabaseInput.value.trim();
+        
+        // Only save and validate if host is provided
+        if (redisHost) {
+          saveRedisCredentials();
+        } else {
+          // If host is empty, clear persistence status
+          updatePersistenceStatus(false);
+        }
+    }, 1000);
+  }
+
+  async function saveRedisCredentials() {
+    const redisHost = elements.redisHostInput.value.trim();
+    const redisPort = parseInt(elements.redisPortInput.value.trim()) || 6379;
+    const redisPassword = elements.redisPasswordInput.value.trim();
+    const redisDatabase = parseInt(elements.redisDatabaseInput.value.trim()) || 0;
+
+    try {
+        const response = await fetch(`/${state.configHash}/redis`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ redisHost, redisPort, redisPassword, redisDatabase })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || "Failed to save Redis credentials");
+        }
+        if (data.configHash && data.configHash !== state.configHash) {
+            state.configHash = data.configHash;
+            updateURL();
+            updateStremioButtonHref();
+        }
+        state.userConfig.redisHost = redisHost;
+        state.userConfig.redisPort = redisPort;
+        state.userConfig.redisPassword = redisPassword;
+        state.userConfig.redisDatabase = redisDatabase;
+        showNotification('connections', 'Redis credentials saved.', 'success');
+        
+        await checkRedisCredentials();
+    } catch(error) {
+        console.error('Redis Save Error:', error);
+        showNotification('connections', `Redis Save Error: ${error.message}`, 'error', true);
+    }
+  }
+
+  async function checkRedisCredentials() {
+    const redisHost = elements.redisHostInput.value.trim();
+    const redisPort = parseInt(elements.redisPortInput.value.trim()) || 6379;
+    const redisPassword = elements.redisPasswordInput.value.trim();
+    const redisDatabase = parseInt(elements.redisDatabaseInput.value.trim()) || 0;
+
+    if (!redisHost) {
+        updatePersistenceStatus(false);
+        return;
+    }
+    
+    try {
+      // Actually validate the Redis credentials with the backend
+      const response = await fetch(`/${state.configHash}/redis/check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ redisHost, redisPort, redisPassword, redisDatabase })
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok && data.success) {
+        // Credentials are valid
+        state.userConfig.redisHost = redisHost;
+        state.userConfig.redisPort = redisPort;
+        state.userConfig.redisPassword = redisPassword;
+        state.userConfig.redisDatabase = redisDatabase;
+        updatePersistenceStatus(true);
+        elements.redisContainer.classList.add('hidden');
+        elements.redisForm.style.display = 'none';
+        showNotification('connections', 'Redis credentials validated successfully.', 'success');
+      } else {
+        // Credentials are invalid
+        updatePersistenceStatus(false);
+        showNotification('connections', `Redis validation failed: ${data.error || 'Invalid credentials'}`, 'error', true);
+      }
+    } catch (error) {
+      console.error('Redis validation error:', error);
+      updatePersistenceStatus(false);
+      showNotification('connections', `Redis validation error: ${error.message}`, 'error', true);
     }
   }
   
@@ -1447,7 +1564,8 @@ document.addEventListener('DOMContentLoaded', function() {
           connectedText.textContent = username ? `[Trakt] Connected as ${username}` : '[Trakt] Connected';
         }
         
-        const isPersistent = !!(state.userConfig.upstashUrl && state.userConfig.upstashToken && state.userConfig.traktUuid);
+        const isPersistent = !!((state.userConfig.upstashUrl && state.userConfig.upstashToken && state.userConfig.traktUuid) ||
+                               (state.userConfig.redisHost && state.userConfig.traktUuid));
         updatePersistenceStatus(isPersistent);
     } else {
         // Disconnected state: show connect button, hide connected state
@@ -1472,34 +1590,90 @@ document.addEventListener('DOMContentLoaded', function() {
     const statusText = document.createElement('span');
     statusText.className = 'status-text';
 
-    const actionLink = document.createElement('a');
-    actionLink.className = 'persistence-action-link';
+    const hasUpstash = state.userConfig?.upstashUrl && state.userConfig?.upstashToken;
+    const hasRedis = state.userConfig?.redisHost;
+    const redisType = hasUpstash ? 'Upstash' : hasRedis ? 'Redis' : null;
 
-    if (isPersistent) {
+    if (isPersistent && redisType) {
         statusIcon.textContent = '✔';
         statusIcon.classList.add('persistent');
-        statusText.textContent = 'Trakt persistent';
-        actionLink.textContent = 'Edit';
-        actionLink.onclick = () => {
-            elements.upstashForm.style.display = 'block';
-            elements.upstashContainer.classList.remove('hidden');
+        statusText.textContent = `Trakt persistent (${redisType})`;
+        
+        const actionContainer = document.createElement('span');
+        actionContainer.className = 'persistence-actions';
+        
+        const editLink = document.createElement('a');
+        editLink.className = 'persistence-action-link';
+        editLink.textContent = 'Edit';
+        editLink.onclick = () => {
+            if (hasUpstash) {
+                elements.upstashForm.style.display = 'block';
+                elements.upstashContainer.classList.remove('hidden');
+            } else if (hasRedis) {
+                elements.redisForm.style.display = 'block';
+                elements.redisContainer.classList.remove('hidden');
+            }
         };
+        
+        const switchLink = document.createElement('a');
+        switchLink.className = 'persistence-action-link';
+        switchLink.textContent = hasUpstash ? 'Switch to Redis' : 'Switch to Upstash';
+        switchLink.onclick = () => {
+            if (hasUpstash) {
+                elements.redisContainer.classList.remove('hidden');
+                elements.redisForm.style.display = 'block';
+            } else {
+                elements.upstashContainer.classList.remove('hidden');
+                elements.upstashForm.style.display = 'block';
+            }
+        };
+        
+        actionContainer.appendChild(editLink);
+        actionContainer.appendChild(document.createTextNode(' | '));
+        actionContainer.appendChild(switchLink);
+        
+        elements.traktStatus.appendChild(statusIcon);
+        elements.traktStatus.appendChild(statusText);
+        elements.traktStatus.appendChild(actionContainer);
+        
         elements.upstashContainer.classList.add('hidden');
         elements.upstashForm.style.display = 'none';
+        elements.redisContainer.classList.add('hidden');
+        elements.redisForm.style.display = 'none';
     } else {
         statusIcon.textContent = '✖';
         statusIcon.classList.add('not-persistent');
         statusText.textContent = 'Trakt not persistent';
-        actionLink.textContent = 'Make persistent';
-        actionLink.onclick = () => {
+        
+        const actionContainer = document.createElement('span');
+        actionContainer.className = 'persistence-actions';
+        
+        const upstashLink = document.createElement('a');
+        upstashLink.className = 'persistence-action-link';
+        upstashLink.textContent = 'Use Upstash';
+        upstashLink.onclick = () => {
             elements.upstashContainer.classList.remove('hidden');
             elements.upstashForm.style.display = 'block';
+            elements.redisContainer.classList.add('hidden');
         };
+        
+        const redisLink = document.createElement('a');
+        redisLink.className = 'persistence-action-link';
+        redisLink.textContent = 'Use Redis';
+        redisLink.onclick = () => {
+            elements.redisContainer.classList.remove('hidden');
+            elements.redisForm.style.display = 'block';
+            elements.upstashContainer.classList.add('hidden');
+        };
+        
+        actionContainer.appendChild(upstashLink);
+        actionContainer.appendChild(document.createTextNode(' | '));
+        actionContainer.appendChild(redisLink);
+        
+        elements.traktStatus.appendChild(statusIcon);
+        elements.traktStatus.appendChild(statusText);
+        elements.traktStatus.appendChild(actionContainer);
     }
-
-    elements.traktStatus.appendChild(statusIcon);
-    elements.traktStatus.appendChild(statusText);
-    elements.traktStatus.appendChild(actionLink);
   }
 
   function handleTraktPinCancel() {
@@ -3034,6 +3208,20 @@ function startNameEditing(listItemElement, list) {
       if (elements.upstashTokenInput) {
         elements.upstashTokenInput.value = state.userConfig.upstashToken || '';
       }
+      
+      // Update Redis credentials
+      if (elements.redisHostInput) {
+        elements.redisHostInput.value = state.userConfig.redisHost || '';
+      }
+      if (elements.redisPortInput) {
+        elements.redisPortInput.value = state.userConfig.redisPort || 6379;
+      }
+      if (elements.redisPasswordInput) {
+        elements.redisPasswordInput.value = state.userConfig.redisPassword || '';
+      }
+      if (elements.redisDatabaseInput) {
+        elements.redisDatabaseInput.value = state.userConfig.redisDatabase || 0;
+      }
 
       // Update metadata settings
       if (elements.metadataSourceSelect) {
@@ -3058,8 +3246,9 @@ function startNameEditing(listItemElement, list) {
       updateSearchSourcesUI();
 
       // Update persistence status
-      const hasUpstashCredentials = !!(state.userConfig.upstashUrl && state.userConfig.upstashToken);
-      updatePersistenceStatus(hasUpstashCredentials);
+      const hasRedisCredentials = !!((state.userConfig.upstashUrl && state.userConfig.upstashToken) ||
+                                    (state.userConfig.redisHost));
+      updatePersistenceStatus(hasRedisCredentials);
     } catch (error) {
       console.error('Error updating UI from config:', error);
     }
@@ -3079,7 +3268,7 @@ function startNameEditing(listItemElement, list) {
       }
 
       // Update Trakt UI
-      const isTraktConnected = !!(state.userConfig.traktAccessToken || (state.userConfig.upstashUrl && state.userConfig.traktUuid));
+      const isTraktConnected = !!(state.userConfig.traktAccessToken || ((state.userConfig.upstashUrl || state.userConfig.redisHost) && state.userConfig.traktUuid));
       updateTraktUI(isTraktConnected, state.userConfig.traktUsername);
 
       // Update TMDB UI

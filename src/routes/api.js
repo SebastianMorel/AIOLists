@@ -15,13 +15,16 @@ const { saveTraktTokens } = require('../utils/remoteStorage');
 
 const manifestCache = new Cache({ defaultTTL: 1 * 60 * 1000 });
 
-// Helper function to create a config copy for storage that excludes sensitive Trakt tokens when using Upstash
+// Helper function to create a config copy for storage that excludes sensitive Trakt tokens when using Upstash or Redis
 function createConfigForStorage(userConfig) {
   const configForStorage = { ...userConfig };
   
-  // Only exclude Trakt tokens from storage if Upstash is configured and we have a traktUuid
-  // This ensures tokens can be retrieved from Upstash when needed
-  if (configForStorage.upstashUrl && configForStorage.traktUuid) {
+  // Only exclude Trakt tokens from storage if Redis is configured and we have a traktUuid
+  // This ensures tokens can be retrieved from Redis when needed
+  const hasRedisStorage = (configForStorage.upstashUrl && configForStorage.traktUuid) ||
+                         (configForStorage.redisHost && configForStorage.traktUuid);
+  
+  if (hasRedisStorage) {
     configForStorage.traktAccessToken = null;
     configForStorage.traktRefreshToken = null;
     configForStorage.traktExpiresAt = null;
@@ -138,21 +141,24 @@ module.exports = function(router) {
         req.userConfig.searchSources = defaultConfig.searchSources;
       }
       
-      // If Upstash is configured and we have a traktUuid, try to load Trakt tokens before determining shared status
-      if (req.userConfig.upstashUrl && req.userConfig.traktUuid && !req.userConfig.traktAccessToken) {
+      // If Redis is configured and we have a traktUuid, try to load Trakt tokens before determining shared status
+      const hasRedisStorage = (req.userConfig.upstashUrl && req.userConfig.traktUuid) ||
+                             (req.userConfig.redisHost && req.userConfig.traktUuid);
+      
+      if (hasRedisStorage && !req.userConfig.traktAccessToken) {
         try {
           await initTraktApi(req.userConfig);
         } catch (error) {
-          console.warn('Failed to load Trakt tokens from Upstash during config param processing:', error.message);
+          console.warn('Failed to load Trakt tokens from Redis during config param processing:', error.message);
         }
       }
       
-      // Determine if this is a potentially shared config (excludes Upstash-stored tokens)
-      const hasUpstashTraktStorage = req.userConfig.upstashUrl && req.userConfig.traktUuid;
+      // Determine if this is a potentially shared config (excludes Redis-stored tokens)
+      const hasRedisTraktStorage = hasRedisStorage;
       
       req.isPotentiallySharedConfig = (!req.userConfig.apiKey && Object.values(req.userConfig.importedAddons || {}).some(addon => addon.isMDBListUrlImport)) ||
-                                     (!req.userConfig.traktAccessToken && !hasUpstashTraktStorage && Object.values(req.userConfig.importedAddons || {}).some(addon => addon.isTraktPublicList)) ||
-                                     (!req.userConfig.traktAccessToken && !hasUpstashTraktStorage && (req.userConfig.listOrder || []).some(id => id.startsWith('trakt_') && !id.startsWith('traktpublic_')));
+                                     (!req.userConfig.traktAccessToken && !hasRedisTraktStorage && Object.values(req.userConfig.importedAddons || {}).some(addon => addon.isTraktPublicList)) ||
+                                     (!req.userConfig.traktAccessToken && !hasRedisTraktStorage && (req.userConfig.listOrder || []).some(id => id.startsWith('trakt_') && !id.startsWith('traktpublic_')));
       next();
     } catch (error) {
       console.error('Error decompressing configHash:', configHash, error);
@@ -728,8 +734,10 @@ module.exports = function(router) {
       delete configToSend.tmdbBearerToken;
     }
     
-    // Always remove Trakt tokens from API responses if Upstash is configured (tokens should only exist in Upstash)
-    if (req.userConfig.upstashUrl && req.userConfig.traktUuid) {
+    // Always remove Trakt tokens from API responses if Redis storage is configured (tokens should only exist in Redis)
+    const hasRedisStorage = (req.userConfig.upstashUrl && req.userConfig.traktUuid) ||
+                           (req.userConfig.redisHost && req.userConfig.traktUuid);
+    if (hasRedisStorage) {
       delete configToSend.traktAccessToken;
       delete configToSend.traktRefreshToken;
       delete configToSend.traktExpiresAt;
@@ -749,6 +757,10 @@ module.exports = function(router) {
       delete configToSend.traktUuid;
       delete configToSend.upstashUrl;
       delete configToSend.upstashToken;
+      delete configToSend.redisHost;
+      delete configToSend.redisPort;
+      delete configToSend.redisPassword;
+      delete configToSend.redisDatabase;
     }
     
     // Remove internal sort options that shouldn't be exposed
@@ -766,7 +778,8 @@ module.exports = function(router) {
       rpdb: !!req.userConfig.rpdbApiKey,
       tmdb: !!(req.userConfig.tmdbSessionId && req.userConfig.tmdbAccountId),
       trakt: !!req.userConfig.traktAccessToken,
-      upstash: !!(req.userConfig.upstashUrl && req.userConfig.upstashToken)
+      upstash: !!(req.userConfig.upstashUrl && req.userConfig.upstashToken),
+      redis: !!req.userConfig.redisHost
     };
     
     res.json({ 
@@ -1271,7 +1284,8 @@ module.exports = function(router) {
         const { order } = req.body;
         if (!Array.isArray(order)) return res.status(400).json({ error: 'Order must be an array of strings.' });
         
-        if (req.userConfig.upstashUrl) {
+        const hasRedisStorage = req.userConfig.upstashUrl || req.userConfig.redisHost;
+        if (hasRedisStorage) {
             await initTraktApi(req.userConfig);
         }
 
@@ -1333,7 +1347,8 @@ module.exports = function(router) {
       const { hiddenLists } = req.body;
       if (!Array.isArray(hiddenLists)) return res.status(400).json({ error: 'Hidden lists must be an array of strings.' });
       
-      if (req.userConfig.upstashUrl) {
+      const hasRedisStorage = req.userConfig.upstashUrl || req.userConfig.redisHost;
+      if (hasRedisStorage) {
           await initTraktApi(req.userConfig);
       }
       
@@ -1349,6 +1364,67 @@ module.exports = function(router) {
         res.status(500).json({ error: 'Failed to update list visibility' });
     }
   });
+
+  router.post('/:configHash/redis', async (req, res) => {
+    try {
+        const { redisHost, redisPort, redisPassword, redisDatabase } = req.body;
+
+        req.userConfig.redisHost = redisHost || '';
+        req.userConfig.redisPort = redisPort || 6379;
+        req.userConfig.redisPassword = redisPassword || '';
+        req.userConfig.redisDatabase = redisDatabase || 0;
+
+        // Save Trakt tokens to Redis if available
+        if (redisHost && req.userConfig.traktAccessToken && req.userConfig.traktUuid) {
+            const tokensToSave = {
+                accessToken: req.userConfig.traktAccessToken,
+                refreshToken: req.userConfig.traktRefreshToken,
+                expiresAt: req.userConfig.traktExpiresAt
+            };
+            await saveTraktTokens(req.userConfig, tokensToSave);
+            
+            // Immediately verify that tokens are accessible from Redis
+            await initTraktApi(req.userConfig);
+            
+            // Clear tokens from local config now that they're safely stored in Redis
+            req.userConfig.traktAccessToken = null;
+            req.userConfig.traktRefreshToken = null;
+            req.userConfig.traktExpiresAt = null;
+        }
+        
+        req.userConfig.lastUpdated = new Date().toISOString();
+        
+        // Use createConfigForStorage to properly handle token storage exclusion
+        const newConfigHash = await compressConfig(createConfigForStorage(req.userConfig));
+        manifestCache.clear();
+        res.json({ success: true, configHash: newConfigHash });
+    } catch (error) {
+        console.error('Error in /redis:', error);
+        res.status(500).json({ error: 'Internal server error in /redis' });
+    }
+  });
+
+  router.post('/:configHash/redis/check', async (req, res) => {
+    const { redisHost, redisPort, redisPassword, redisDatabase } = req.body;
+    try {
+        const { createClient } = require('redis');
+        const client = createClient({
+            socket: {
+                host: redisHost,
+                port: redisPort || 6379
+            },
+            password: redisPassword || undefined,
+            database: redisDatabase || 0
+        });
+        await client.connect();
+        // A simple command to check the connection
+        await client.ping();
+        await client.disconnect();
+        res.json({ success: true });
+    } catch (error) {
+        res.status(400).json({ success: false, error: 'Invalid Redis credentials' });
+    }
+});
 
   router.post('/:configHash/upstash/check', async (req, res) => {
     const { upstashUrl, upstashToken } = req.body;
@@ -1459,7 +1535,8 @@ module.exports = function(router) {
 
   router.post('/:configHash/lists/merge', async (req, res) => {
     try {
-      if (req.userConfig.upstashUrl) {
+      const hasRedisStorage = req.userConfig.upstashUrl || req.userConfig.redisHost;
+      if (hasRedisStorage) {
         await initTraktApi(req.userConfig);
       }
 
