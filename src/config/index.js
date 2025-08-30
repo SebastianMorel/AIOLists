@@ -19,6 +19,12 @@ const TMDB_REDIRECT_URI = process.env.TMDB_REDIRECT_URI || '';
 const TMDB_BEARER_TOKEN = process.env.TMDB_BEARER_TOKEN || '';
 const CUSTOM_HTML_BLURB = process.env.CUSTOM_HTML_BLURB || '';
 
+// Redis configuration from environment variables
+const REDIS_HOST = process.env.REDIS_HOST || '';
+const REDIS_PORT = process.env.REDIS_PORT ? parseInt(process.env.REDIS_PORT) : 6379;
+const REDIS_PASSWORD = process.env.REDIS_PASSWORD || '';
+const REDIS_DATABASE = process.env.REDIS_DATABASE ? parseInt(process.env.REDIS_DATABASE) : 0;
+
 const staticGenres = [
   "All","Action", "Adventure", "Animation", "Anime", "Biography", "Comedy", "Crime",
   "Documentary", "Drama", "Family", "Fantasy", "History", "Horror",
@@ -39,6 +45,15 @@ const defaultConfig = {
   traktRefreshToken: '',
   traktExpiresAt: null,
   traktUsername: '',
+  traktUuid: '',
+  // Redis configuration (use env vars as defaults)
+  redisHost: REDIS_HOST,
+  redisPort: REDIS_PORT,
+  redisPassword: REDIS_PASSWORD,
+  redisDatabase: REDIS_DATABASE,
+  // Upstash Redis configuration
+  upstashUrl: '',
+  upstashToken: '',
   listOrder: [],
   lastUpdated: null,
   listsMetadata: {},
@@ -103,6 +118,11 @@ module.exports = {
   TMDB_REDIRECT_URI,
   TMDB_BEARER_TOKEN,
   CUSTOM_HTML_BLURB,
+  // Redis environment variables
+  REDIS_HOST,
+  REDIS_PORT,
+  REDIS_PASSWORD,
+  REDIS_DATABASE,
   PORT,
   IS_PRODUCTION,
   staticGenres,
