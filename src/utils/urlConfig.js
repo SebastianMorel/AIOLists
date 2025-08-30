@@ -115,6 +115,10 @@ function createShareableConfig(config) {
   delete shareableConfig.traktUuid;
   delete shareableConfig.upstashUrl;
   delete shareableConfig.upstashToken;
+  delete shareableConfig.redisHost;
+  delete shareableConfig.redisPort;
+  delete shareableConfig.redisPassword;
+  delete shareableConfig.redisDatabase;
 
   return shareableConfig;
 }
