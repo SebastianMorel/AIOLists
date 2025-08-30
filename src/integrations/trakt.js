@@ -55,8 +55,8 @@ async function refreshTraktToken(userConfig) {
       userConfig.traktRefreshToken = newTokens.refreshToken;
       userConfig.traktExpiresAt = newTokens.expiresAt;
 
-      // Only save if Upstash credentials are provided
-      if (userConfig.upstashUrl && userConfig.traktUuid) {
+      // Save tokens if Redis is configured
+      if (hasRedisConfig(userConfig) && userConfig.traktUuid) {
         await saveTraktTokens(userConfig, newTokens);
       }
       return true;
@@ -67,7 +67,7 @@ async function refreshTraktToken(userConfig) {
       userConfig.traktAccessToken = null;
       userConfig.traktRefreshToken = null;
       userConfig.traktExpiresAt = null;
-      if (userConfig.upstashUrl && userConfig.traktUuid) {
+      if (hasRedisConfig(userConfig) && userConfig.traktUuid) {
         await saveTraktTokens(userConfig, { accessToken: null, refreshToken: null, expiresAt: null });
       }
     }
@@ -75,11 +75,18 @@ async function refreshTraktToken(userConfig) {
   }
 }
 
+// Helper function to check if Redis (either type) is configured
+function hasRedisConfig(userConfig) {
+  const hasUpstash = userConfig.upstashUrl && userConfig.upstashToken;
+  const hasStandardRedis = userConfig.redisHost;
+  return hasUpstash || hasStandardRedis;
+}
+
 async function initTraktApi(userConfig) {
 
   
-  // If Upstash credentials are provided, use them as the source of truth
-  if (userConfig.upstashUrl && userConfig.upstashToken && userConfig.traktUuid) {
+  // If Redis credentials are provided, use them as the source of truth
+  if (hasRedisConfig(userConfig) && userConfig.traktUuid) {
     const tokens = await getTraktTokens(userConfig);
     if (tokens) {
       userConfig.traktAccessToken = tokens.accessToken;
