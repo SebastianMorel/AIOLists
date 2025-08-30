@@ -1,0 +1,13 @@
+services:
+  aiolists:
+    image: ghcr.io/voltstorm/aiolists:latest
+    container_name: aiolists
+    ports:
+      - "7000:7000"
+    environment:
+      - NODE_ENV=production
+      - PORT=7000
+      # TMDB Configuration (optional - can be set via UI if not provided)
+      - TMDB_REDIRECT_URI=${TMDB_REDIRECT_URI:-}
+      - TMDB_BEARER_TOKEN=${TMDB_BEARER_TOKEN:-}
+    restart: unless-stopped

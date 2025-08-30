@@ -1,0 +1,42 @@
+services:
+  aiolists:
+    image: ghcr.io/voltstorm/aiolists:latest
+    container_name: aiolists
+    ports:
+      - "7000:7000"
+    environment:
+      - NODE_ENV=production
+      - PORT=7000
+      # TMDB Configuration (optional - can be set via UI if not provided)
+      - TMDB_REDIRECT_URI=${TMDB_REDIRECT_URI:-}
+      - TMDB_BEARER_TOKEN=${TMDB_BEARER_TOKEN:-}
+      # Redis Configuration (optional - can be set via UI if not provided)
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_DATABASE=${REDIS_DATABASE:-0}
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - aiolists-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: aiolists-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - aiolists-network
+
+volumes:
+  redis-data:
+    driver: local
+
+networks:
+  aiolists-network:
+    driver: bridge

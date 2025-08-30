@@ -77,6 +77,19 @@ When both `TMDB_BEARER_TOKEN` and redirect URIs are configured, the "Connect to 
 
 # Deployment
 
+## Quick Start with Docker Compose
+
+Get AIOLists running in 30 seconds:
+
+```bash
+curl -O https://raw.githubusercontent.com/VoltStorm/AIOLists/main/docker-compose.yml
+docker compose up -d
+```
+
+Then visit `http://localhost:7000` to access AIOLists and `http://localhost:7000/configure` for configuration.
+
+---
+
 The easiest way to host this project for free is through hugging face.
 
 **Steps:**
@@ -86,7 +99,7 @@ The easiest way to host this project for free is through hugging face.
 4. Scroll down to "Create your Dockerfile" and press "create the Dockerfile" at the bottom of the section.
 5. Paste in
     ```bash
-    FROM ghcr.io/sebastianmorel/aiolists:latest
+    FROM ghcr.io/voltstorm/aiolists:latest
     ENV PORT=7860
     ```
 6. Press "Commit new file to main"
@@ -100,9 +113,62 @@ Most modern PaaS providers that support Docker can deploy AIOLists.
 -   **Render**: Create a new "Web Service", connect your repository, and choose Docker as the environment. Render will build and deploy from the `Dockerfile`. Set the `PORT` environment variable.
 -   **Fly.io**: Use the `flyctl` CLI to launch a new app. It can often detect and use your `Dockerfile`.
 
-## Deploy with Docker
+## Deploy with Docker Compose (Recommended)
+
+The easiest way to deploy AIOLists with all dependencies is using Docker Compose. This will automatically set up AIOLists with a Redis instance for data persistence.
 
 **Steps:**
+
+1.  **Download the docker-compose.yml file:**
+    ```bash
+    # Full setup with Redis (recommended)
+    curl -O https://raw.githubusercontent.com/VoltStorm/AIOLists/main/docker-compose.yml
+    
+    # OR simple setup without Redis
+    curl -O https://raw.githubusercontent.com/VoltStorm/AIOLists/main/docker-compose.simple.yml
+    # If using simple setup, rename it:
+    mv docker-compose.simple.yml docker-compose.yml
+    ```
+
+2.  **Optional: Configure environment variables:**
+    ```bash
+    curl -O https://raw.githubusercontent.com/VoltStorm/AIOLists/main/.env.docker-compose
+    cp .env.docker-compose .env
+    # Edit .env with your TMDB credentials (optional)
+    ```
+
+3.  **Start the services:**
+    ```bash
+    docker-compose up -d
+    ```
+
+4.  **Access your instance:**
+    - AIOLists will be available at `http://localhost:7000`
+    - Configuration panel: `http://localhost:7000/configure`
+    - Redis will be automatically connected and available for data persistence
+
+**What's included:**
+- AIOLists application (latest image from GitHub Container Registry)
+- Redis server for data persistence
+- Automatic networking between services
+- Data persistence with Docker volumes
+- Automatic restarts
+
+**Customization:**
+- Edit the `docker-compose.yml` file to change ports or add additional environment variables
+- The Redis service can be removed if you prefer to use an external Redis instance
+- All configuration can also be done through the AIOLists web interface after startup
+
+## Deploy with Docker
+
+**Option 1: Using the pre-built image (Recommended)**
+
+1.  **Run the container directly from GitHub Container Registry:**
+    ```bash
+    docker run -d -p 7000:7000 -e NODE_ENV=production --restart unless-stopped ghcr.io/voltstorm/aiolists:latest
+    ```
+
+**Option 2: Build from source**
 
 1.  **Clone your fork (or the original repository):**
     ```bash
@@ -119,7 +185,8 @@ Most modern PaaS providers that support Docker can deploy AIOLists.
     ```bash
     docker run -d -p 7000:7000 -e NODE_ENV=production --restart unless-stopped aiolists-addon
     ```
-    Your addon will be available at `http://YOUR_SERVER_IP:7000`. You can then access the configuration panel at `http://YOUR_SERVER_IP:7000/configure`.
+
+Your addon will be available at `http://YOUR_SERVER_IP:7000`. You can then access the configuration panel at `http://YOUR_SERVER_IP:7000/configure`.
 
 ## Deploy on Your Own Node.js Server
 
