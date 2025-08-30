@@ -145,7 +145,6 @@ async function authenticateTrakt(code, userConfig) {
 
 // ... the rest of the file (fetchTraktLists, etc.) remains unchanged ...
 async function fetchTraktLists(userConfig) {
-    console.log('[TraktIntegration] fetchTraktLists called');
     const fetchStartTime = Date.now();
     
     // Always include special lists that don't require authentication
@@ -158,11 +157,9 @@ async function fetchTraktLists(userConfig) {
     
     // Check if user is authenticated for accessing personal lists
     const isAuthenticated = await initTraktApi(userConfig);
-    console.log('[TraktIntegration] Authentication status:', isAuthenticated);
     
     if (!isAuthenticated) {
       // Return only public lists if not authenticated
-      console.log('[TraktIntegration] Returning special lists only (no authentication)');
       return specialLists.map(sl => ({ ...sl, updated: new Date().toISOString() }));
     }
     
@@ -187,13 +184,11 @@ async function fetchTraktLists(userConfig) {
       ];
       
       const allLists = [...lists, ...specialLists, ...authenticatedLists].map(sl => ({ ...sl, updated: new Date().toISOString() }));
-      console.log('[TraktIntegration] Returning authenticated lists count:', allLists.length);
       const fetchEndTime = Date.now();
       return allLists;
     } catch (error) {
       console.error("[TraktIntegration] Exception fetching Trakt lists:", error.message);
       // Return only public lists if API call fails
-      console.log('[TraktIntegration] Returning special lists only (API error)');
       return specialLists.map(sl => ({ ...sl, updated: new Date().toISOString() }));
     }
   }

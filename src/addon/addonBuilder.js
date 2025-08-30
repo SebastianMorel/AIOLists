@@ -410,10 +410,9 @@ async function createAddon(userConfig) {
       originalId: 'watchlist'
     });
   }
-  if (traktAccessToken) {
-    const traktFetchedLists = await fetchTraktLists(userConfig); // This might modify userConfig (token refresh)
-    activeListsInfo.push(...traktFetchedLists.map(l => ({ ...l, source: 'trakt', originalId: String(l.id) })));
-  }
+  // Always fetch Trakt lists - the function will handle authentication internally
+  const traktFetchedLists = await fetchTraktLists(userConfig); // This might modify userConfig (token refresh)
+  activeListsInfo.push(...traktFetchedLists.map(l => ({ ...l, source: 'trakt', originalId: String(l.id) })));
   
   if (userConfig.tmdbSessionId && userConfig.tmdbAccountId) {
     try {
@@ -499,10 +498,10 @@ async function createAddon(userConfig) {
       sourceHasShows = listSourceInfo.hasShows;
   } else if (listSourceInfo.source === 'trakt') { // This now only handles private trakt
       let metadata = userConfig.listsMetadata[currentListId] || userConfig.listsMetadata[listSourceInfo.originalId] || {};
-      sourceHasMovies = metadata.hasMovies === true;
-      sourceHasShows = metadata.hasShows === true;
       
-      console.log(`[AddonBuilder] Processing Trakt list ${currentListId}: hasMovies=${sourceHasMovies}, hasShows=${sourceHasShows}, metadata=`, metadata);
+      // Use metadata first, but fall back to listSourceInfo properties
+      sourceHasMovies = metadata.hasMovies === true || listSourceInfo.hasMovies === true;
+      sourceHasShows = metadata.hasShows === true || listSourceInfo.hasShows === true;
 
         if (listSourceInfo.source === 'trakt' && (typeof metadata.hasMovies !== 'boolean' || typeof metadata.hasShows !== 'boolean' || metadata.errorFetching) && traktAccessToken) {
             let success = false; let fetchRetries = 0; if(metadata.errorFetching) delete metadata.errorFetching;
@@ -558,7 +557,7 @@ async function createAddon(userConfig) {
     if (!sourceHasMovies && !sourceHasShows && !customUserDefinedType) {
         // If no content and no custom type, don't add catalog (unless it's explicitly an 'all' type list with no content yet)
         if (listSourceInfo.type !== 'all' || (listSourceInfo.type === 'all' && (listSourceInfo.hasMovies === false && listSourceInfo.hasShows === false))) {
-             console.warn(`[AIOLists AddonBuilder] List ${currentListId} ('${displayName}') has no movie/series content and no custom type. Skipping manifest entry. sourceHasMovies=${sourceHasMovies}, sourceHasShows=${sourceHasShows}`);
+             console.warn(`[AIOLists AddonBuilder] List ${currentListId} ('${displayName}') has no movie/series content and no custom type. Skipping manifest entry.`);
              return;
         }
     }
