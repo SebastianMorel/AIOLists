@@ -410,10 +410,9 @@ async function createAddon(userConfig) {
       originalId: 'watchlist'
     });
   }
-  if (traktAccessToken) {
-    const traktFetchedLists = await fetchTraktLists(userConfig); // This might modify userConfig (token refresh)
-    activeListsInfo.push(...traktFetchedLists.map(l => ({ ...l, source: 'trakt', originalId: String(l.id) })));
-  }
+  // Always fetch Trakt lists - the function will handle authentication internally
+  const traktFetchedLists = await fetchTraktLists(userConfig); // This might modify userConfig (token refresh)
+  activeListsInfo.push(...traktFetchedLists.map(l => ({ ...l, source: 'trakt', originalId: String(l.id) })));
   
   if (userConfig.tmdbSessionId && userConfig.tmdbAccountId) {
     try {
@@ -499,8 +498,10 @@ async function createAddon(userConfig) {
       sourceHasShows = listSourceInfo.hasShows;
   } else if (listSourceInfo.source === 'trakt') { // This now only handles private trakt
       let metadata = userConfig.listsMetadata[currentListId] || userConfig.listsMetadata[listSourceInfo.originalId] || {};
-      sourceHasMovies = metadata.hasMovies === true;
-      sourceHasShows = metadata.hasShows === true;
+      
+      // Use metadata first, but fall back to listSourceInfo properties
+      sourceHasMovies = metadata.hasMovies === true || listSourceInfo.hasMovies === true;
+      sourceHasShows = metadata.hasShows === true || listSourceInfo.hasShows === true;
 
         if (listSourceInfo.source === 'trakt' && (typeof metadata.hasMovies !== 'boolean' || typeof metadata.hasShows !== 'boolean' || metadata.errorFetching) && traktAccessToken) {
             let success = false; let fetchRetries = 0; if(metadata.errorFetching) delete metadata.errorFetching;
