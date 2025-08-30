@@ -399,6 +399,16 @@ async function createAddon(userConfig) {
   if (apiKey) {
     const mdbLists = await fetchAllMDBLists(apiKey);
     activeListsInfo.push(...mdbLists.map(l => ({ ...l, source: 'mdblist', originalId: String(l.id) })));
+  } else {
+    // Even without an API key, we should provide the watchlist
+    activeListsInfo.push({
+      id: 'watchlist',
+      name: 'My Watchlist',
+      listType: 'W',
+      isWatchlist: true,
+      source: 'mdblist',
+      originalId: 'watchlist'
+    });
   }
   if (traktAccessToken) {
     const traktFetchedLists = await fetchTraktLists(userConfig); // This might modify userConfig (token refresh)
