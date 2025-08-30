@@ -961,8 +961,33 @@ module.exports = function(router) {
         userConfig.traktUsername = authResult.username; // Store the username for persistence
       }
       
+      // Save tokens to Redis/Upstash if configured
+      const hasUpstash = userConfig.upstashUrl && userConfig.upstashToken;
+      const hasRedis = userConfig.redisHost && userConfig.redisHost.trim();
+      
+      if ((hasUpstash || hasRedis) && userConfig.traktUuid) {
+        console.log('[TRAKT AUTH] Redis/Upstash is configured, saving tokens after authentication');
+        const tokensToSave = {
+          accessToken: authResult.accessToken,
+          refreshToken: authResult.refreshToken,
+          expiresAt: authResult.expiresAt
+        };
+        try {
+          await saveTraktTokens(userConfig, tokensToSave);
+          console.log('[TRAKT AUTH] Successfully saved tokens to Redis/Upstash');
+          
+          // If tokens are successfully saved to Redis/Upstash, clear them from local config
+          userConfig.traktAccessToken = null;
+          userConfig.traktRefreshToken = null;
+          userConfig.traktExpiresAt = null;
+        } catch (saveError) {
+          console.error('[TRAKT AUTH] Failed to save tokens to Redis/Upstash:', saveError.message);
+          // Keep tokens in local config if saving to Redis/Upstash fails
+        }
+      }
+      
       // Compress and return new config hash
-      const newConfigHash = await compressConfig(userConfig);
+      const newConfigHash = await compressConfig(createConfigForStorage(userConfig));
       
       res.json({
         success: true,

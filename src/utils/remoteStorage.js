@@ -86,7 +86,7 @@ async function closeRedisClient(client, type) {
 
 async function getTraktTokens(userConfig) {
     const hasUpstash = userConfig.upstashUrl && userConfig.upstashToken;
-    const hasRedis = userConfig.redisHost;
+    const hasRedis = userConfig.redisHost && userConfig.redisHost.trim();
     
     if (!hasUpstash && !hasRedis) {
         console.log('[REDIS] getTraktTokens: No Redis configuration provided');
@@ -150,7 +150,7 @@ async function getTraktTokens(userConfig) {
 
 async function saveTraktTokens(userConfig, tokens) {
     const hasUpstash = userConfig.upstashUrl && userConfig.upstashToken;
-    const hasRedis = userConfig.redisHost;
+    const hasRedis = userConfig.redisHost && userConfig.redisHost.trim();
     
     if (!hasUpstash && !hasRedis) {
         console.log('[REDIS] saveTraktTokens: No Redis configuration provided');
@@ -235,7 +235,7 @@ async function saveTraktTokens(userConfig, tokens) {
 
 async function debugTraktTokens(userConfig) {
     const hasUpstash = userConfig.upstashUrl && userConfig.upstashToken;
-    const hasRedis = userConfig.redisHost;
+    const hasRedis = userConfig.redisHost && userConfig.redisHost.trim();
     
     if (!hasUpstash && !hasRedis) {
         console.log('[REDIS DEBUG] No Redis configuration provided');
@@ -301,7 +301,7 @@ async function debugTraktTokens(userConfig) {
 
 async function clearTraktTokens(userConfig) {
     const hasUpstash = userConfig.upstashUrl && userConfig.upstashToken;
-    const hasRedis = userConfig.redisHost;
+    const hasRedis = userConfig.redisHost && userConfig.redisHost.trim();
     
     if (!hasUpstash && !hasRedis) {
         console.log('[REDIS] clearTraktTokens: No Redis configuration provided');
