@@ -77,6 +77,19 @@ When both `TMDB_BEARER_TOKEN` and redirect URIs are configured, the "Connect to 
 
 # Deployment
 
+## Quick Start with Docker Compose
+
+Get AIOLists running in 30 seconds:
+
+```bash
+curl -O https://raw.githubusercontent.com/VoltStorm/AIOLists/main/docker-compose.yml
+docker compose up -d
+```
+
+Then visit `http://localhost:7000` to access AIOLists and `http://localhost:7000/configure` for configuration.
+
+---
+
 The easiest way to host this project for free is through hugging face.
 
 **Steps:**
