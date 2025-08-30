@@ -6,6 +6,7 @@ const { createClient } = require('redis');
 async function createRedisClient(userConfig) {
     // Check if using standard Redis
     if (userConfig.redisHost) {
+        console.log(`[REDIS] Creating standard Redis client - Host: ${userConfig.redisHost}, Port: ${userConfig.redisPort || 6379}, DB: ${userConfig.redisDatabase || 0}`);
         const client = createClient({
             socket: {
                 host: userConfig.redisHost,
@@ -15,15 +16,18 @@ async function createRedisClient(userConfig) {
             database: userConfig.redisDatabase || 0
         });
         await client.connect();
+        console.log(`[REDIS] Successfully connected to Redis`);
         return { client, type: 'standard' };
     }
     
     // Use Upstash Redis
     if (userConfig.upstashUrl && userConfig.upstashToken) {
+        console.log(`[UPSTASH] Creating Upstash Redis client - URL: ${userConfig.upstashUrl}`);
         const client = new Redis({
             url: userConfig.upstashUrl,
             token: userConfig.upstashToken,
         });
+        console.log(`[UPSTASH] Successfully created Upstash client`);
         return { client, type: 'upstash' };
     }
     
@@ -34,18 +38,41 @@ async function createRedisClient(userConfig) {
 async function getFromRedis(client, type, key) {
     if (type === 'standard') {
         const data = await client.get(key);
-        return data ? JSON.parse(data) : null;
+        if (data === null || data === undefined) {
+            console.log(`[REDIS] Key '${key}' not found in Redis`);
+            return null;
+        }
+        try {
+            const parsed = JSON.parse(data);
+            console.log(`[REDIS] Successfully parsed data for key '${key}'`);
+            return parsed;
+        } catch (error) {
+            console.error(`[REDIS] Failed to parse JSON data for key '${key}':`, error.message);
+            console.error(`[REDIS] Raw data:`, data);
+            return null;
+        }
     } else {
-        return await client.get(key);
+        const data = await client.get(key);
+        if (data === null || data === undefined) {
+            console.log(`[UPSTASH] Key '${key}' not found in Redis`);
+            return null;
+        }
+        console.log(`[UPSTASH] Successfully retrieved data for key '${key}'`);
+        return data;
     }
 }
 
 // Helper function to set value in Redis client
 async function setToRedis(client, type, key, value) {
     if (type === 'standard') {
-        await client.set(key, JSON.stringify(value));
+        const jsonData = JSON.stringify(value);
+        console.log(`[REDIS] Setting key '${key}' with JSON data length: ${jsonData.length}`);
+        await client.set(key, jsonData);
+        console.log(`[REDIS] Successfully set key '${key}'`);
     } else {
+        console.log(`[UPSTASH] Setting key '${key}' with object data`);
         await client.set(key, value);
+        console.log(`[UPSTASH] Successfully set key '${key}'`);
     }
 }
 
@@ -73,6 +100,7 @@ async function getTraktTokens(userConfig) {
 
     let client, type;
     try {
+        console.log('[REDIS] Creating Redis connection...');
         const redisConnection = await createRedisClient(userConfig);
         client = redisConnection.client;
         type = redisConnection.type;
@@ -80,24 +108,29 @@ async function getTraktTokens(userConfig) {
         const redisKey = `trakt:${userConfig.traktUuid}`;
         const logPrefix = type === 'upstash' ? '[UPSTASH]' : '[REDIS]';
         console.log(`${logPrefix} Attempting to get tokens from Redis key: ${redisKey}`);
+        console.log(`${logPrefix} Redis config - Host: ${userConfig.redisHost}, Port: ${userConfig.redisPort}, DB: ${userConfig.redisDatabase}`);
         
         const data = await getFromRedis(client, type, redisKey);
         console.log(`${logPrefix} Retrieved tokens:`, {
             found: !!data,
             hasAccessToken: !!data?.accessToken,
             hasRefreshToken: !!data?.refreshToken,
-            expiresAt: data?.expiresAt
+            expiresAt: data?.expiresAt,
+            dataType: typeof data,
+            dataKeys: data ? Object.keys(data) : 'null'
         });
         
         return data;
     } catch (error) {
         const logPrefix = type === 'upstash' ? 'Upstash' : 'Redis';
         console.error(`${logPrefix} Error: Failed to get Trakt tokens:`, error.message);
+        console.error(`${logPrefix} Error stack:`, error.stack);
         return null;
     } finally {
         if (client && type) {
             try {
                 await closeRedisClient(client, type);
+                console.log(`[REDIS] Closed Redis connection`);
             } catch (err) {
                 console.error('Error closing Redis client:', err.message);
             }
@@ -119,8 +152,15 @@ async function saveTraktTokens(userConfig, tokens) {
         return;
     }
 
+    // Don't save if all token values are null/undefined
+    if (!tokens || (!tokens.accessToken && !tokens.refreshToken)) {
+        console.log('[REDIS] saveTraktTokens: No valid tokens to save, skipping');
+        return;
+    }
+
     let client, type;
     try {
+        console.log('[REDIS] Creating Redis connection for save...');
         const redisConnection = await createRedisClient(userConfig);
         client = redisConnection.client;
         type = redisConnection.type;
@@ -128,10 +168,13 @@ async function saveTraktTokens(userConfig, tokens) {
         const redisKey = `trakt:${userConfig.traktUuid}`;
         const logPrefix = type === 'upstash' ? '[UPSTASH]' : '[REDIS]';
         console.log(`${logPrefix} Saving tokens to Redis key: ${redisKey}`);
+        console.log(`${logPrefix} Redis config - Host: ${userConfig.redisHost}, Port: ${userConfig.redisPort}, DB: ${userConfig.redisDatabase}`);
         console.log(`${logPrefix} Tokens being saved:`, {
             hasAccessToken: !!tokens.accessToken,
             hasRefreshToken: !!tokens.refreshToken,
-            expiresAt: tokens.expiresAt
+            expiresAt: tokens.expiresAt,
+            expiresAtType: typeof tokens.expiresAt,
+            tokenKeys: tokens ? Object.keys(tokens) : 'null'
         });
         
         await setToRedis(client, type, redisKey, tokens);
@@ -142,17 +185,21 @@ async function saveTraktTokens(userConfig, tokens) {
         console.log(`${logPrefix} Verification read back:`, {
             hasAccessToken: !!verification?.accessToken,
             hasRefreshToken: !!verification?.refreshToken,
-            expiresAt: verification?.expiresAt
+            expiresAt: verification?.expiresAt,
+            expiresAtType: typeof verification?.expiresAt,
+            verificationSuccess: !!(verification?.accessToken && verification?.refreshToken)
         });
         
     } catch (error) {
         const logPrefix = type === 'upstash' ? 'Upstash' : 'Redis';
         console.error(`${logPrefix} Error: Failed to save Trakt tokens:`, error.message);
+        console.error(`${logPrefix} Error stack:`, error.stack);
         throw error; // Re-throw to ensure calling code knows it failed
     } finally {
         if (client && type) {
             try {
                 await closeRedisClient(client, type);
+                console.log(`[REDIS] Closed Redis connection after save`);
             } catch (err) {
                 console.error('Error closing Redis client:', err.message);
             }
@@ -160,4 +207,53 @@ async function saveTraktTokens(userConfig, tokens) {
     }
 }
 
-module.exports = { getTraktTokens, saveTraktTokens };
+async function clearTraktTokens(userConfig) {
+    const hasUpstash = userConfig.upstashUrl && userConfig.upstashToken;
+    const hasRedis = userConfig.redisHost;
+    
+    if (!hasUpstash && !hasRedis) {
+        console.log('[REDIS] clearTraktTokens: No Redis configuration provided');
+        return;
+    }
+    
+    if (!userConfig.traktUuid) {
+        console.log('[REDIS] clearTraktTokens: Missing traktUuid');
+        return;
+    }
+
+    let client, type;
+    try {
+        console.log('[REDIS] Creating Redis connection for clear...');
+        const redisConnection = await createRedisClient(userConfig);
+        client = redisConnection.client;
+        type = redisConnection.type;
+
+        const redisKey = `trakt:${userConfig.traktUuid}`;
+        const logPrefix = type === 'upstash' ? '[UPSTASH]' : '[REDIS]';
+        console.log(`${logPrefix} Clearing tokens from Redis key: ${redisKey}`);
+        
+        if (type === 'standard') {
+            await client.del(redisKey);
+        } else {
+            await client.del(redisKey);
+        }
+        
+        console.log(`${logPrefix} Successfully cleared tokens from Redis`);
+        
+    } catch (error) {
+        const logPrefix = type === 'upstash' ? 'Upstash' : 'Redis';
+        console.error(`${logPrefix} Error: Failed to clear Trakt tokens:`, error.message);
+        console.error(`${logPrefix} Error stack:`, error.stack);
+    } finally {
+        if (client && type) {
+            try {
+                await closeRedisClient(client, type);
+                console.log(`[REDIS] Closed Redis connection after clear`);
+            } catch (err) {
+                console.error('Error closing Redis client:', err.message);
+            }
+        }
+    }
+}
+
+module.exports = { getTraktTokens, saveTraktTokens, clearTraktTokens };
