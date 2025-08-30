@@ -145,11 +145,26 @@ async function authenticateTrakt(code, userConfig) {
 
 // ... the rest of the file (fetchTraktLists, etc.) remains unchanged ...
 async function fetchTraktLists(userConfig) {
-    if (!await initTraktApi(userConfig)) {
-      return [];
-    }
-    
+    console.log('[TraktIntegration] fetchTraktLists called');
     const fetchStartTime = Date.now();
+    
+    // Always include special lists that don't require authentication
+    const specialLists = [
+      { id: 'trakt_trending_movies', name: 'Trending Movies', isTraktTrending: true, listType: 'T', hasMovies: true, hasShows: false },
+      { id: 'trakt_trending_shows', name: 'Trending Shows', isTraktTrending: true, listType: 'T', hasMovies: false, hasShows: true },
+      { id: 'trakt_popular_movies', name: 'Popular Movies', isTraktPopular: true, listType: 'T', hasMovies: true, hasShows: false },
+      { id: 'trakt_popular_shows', name: 'Popular Shows', isTraktPopular: true, listType: 'T', hasMovies: false, hasShows: true }
+    ];
+    
+    // Check if user is authenticated for accessing personal lists
+    const isAuthenticated = await initTraktApi(userConfig);
+    console.log('[TraktIntegration] Authentication status:', isAuthenticated);
+    
+    if (!isAuthenticated) {
+      // Return only public lists if not authenticated
+      console.log('[TraktIntegration] Returning special lists only (no authentication)');
+      return specialLists.map(sl => ({ ...sl, updated: new Date().toISOString() }));
+    }
     
     try {
       const response = await axios.get(`${TRAKT_API_URL}/users/me/lists`, {
@@ -163,22 +178,23 @@ async function fetchTraktLists(userConfig) {
       const lists = response.data.map(list => ({
         id: `trakt_${list.ids.slug}`, name: list.name, updated: list.updated_at, listType: 'T', isTraktList: true, hasMovies: true, hasShows: true
       }));
-      const specialLists = [
+      
+      // Add authenticated-only lists
+      const authenticatedLists = [
         { id: 'trakt_watchlist', name: 'Trakt Watchlist', isTraktWatchlist: true, listType: 'T', hasMovies: true, hasShows: true },
         { id: 'trakt_recommendations_movies', name: 'Recommended Movies', isTraktRecommendations: true, listType: 'T', hasMovies: true, hasShows: false },
-        { id: 'trakt_recommendations_shows', name: 'Recommended Shows', isTraktRecommendations: true, listType: 'T', hasMovies: false, hasShows: true },
-        { id: 'trakt_trending_movies', name: 'Trending Movies', isTraktTrending: true, listType: 'T', hasMovies: true, hasShows: false },
-        { id: 'trakt_trending_shows', name: 'Trending Shows', isTraktTrending: true, listType: 'T', hasMovies: false, hasShows: true },
-        { id: 'trakt_popular_movies', name: 'Popular Movies', isTraktPopular: true, listType: 'T', hasMovies: true, hasShows: false },
-        { id: 'trakt_popular_shows', name: 'Popular Shows', isTraktPopular: true, listType: 'T', hasMovies: false, hasShows: true }
+        { id: 'trakt_recommendations_shows', name: 'Recommended Shows', isTraktRecommendations: true, listType: 'T', hasMovies: false, hasShows: true }
       ];
       
-      const allLists = [...lists, ...specialLists.map(sl => ({ ...sl, updated: new Date().toISOString() }))];
+      const allLists = [...lists, ...specialLists, ...authenticatedLists].map(sl => ({ ...sl, updated: new Date().toISOString() }));
+      console.log('[TraktIntegration] Returning authenticated lists count:', allLists.length);
       const fetchEndTime = Date.now();
       return allLists;
     } catch (error) {
       console.error("[TraktIntegration] Exception fetching Trakt lists:", error.message);
-      return [];
+      // Return only public lists if API call fails
+      console.log('[TraktIntegration] Returning special lists only (API error)');
+      return specialLists.map(sl => ({ ...sl, updated: new Date().toISOString() }));
     }
   }
   

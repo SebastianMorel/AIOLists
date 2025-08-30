@@ -501,6 +501,8 @@ async function createAddon(userConfig) {
       let metadata = userConfig.listsMetadata[currentListId] || userConfig.listsMetadata[listSourceInfo.originalId] || {};
       sourceHasMovies = metadata.hasMovies === true;
       sourceHasShows = metadata.hasShows === true;
+      
+      console.log(`[AddonBuilder] Processing Trakt list ${currentListId}: hasMovies=${sourceHasMovies}, hasShows=${sourceHasShows}, metadata=`, metadata);
 
         if (listSourceInfo.source === 'trakt' && (typeof metadata.hasMovies !== 'boolean' || typeof metadata.hasShows !== 'boolean' || metadata.errorFetching) && traktAccessToken) {
             let success = false; let fetchRetries = 0; if(metadata.errorFetching) delete metadata.errorFetching;
@@ -556,7 +558,7 @@ async function createAddon(userConfig) {
     if (!sourceHasMovies && !sourceHasShows && !customUserDefinedType) {
         // If no content and no custom type, don't add catalog (unless it's explicitly an 'all' type list with no content yet)
         if (listSourceInfo.type !== 'all' || (listSourceInfo.type === 'all' && (listSourceInfo.hasMovies === false && listSourceInfo.hasShows === false))) {
-             console.warn(`[AIOLists AddonBuilder] List ${currentListId} ('${displayName}') has no movie/series content and no custom type. Skipping manifest entry.`);
+             console.warn(`[AIOLists AddonBuilder] List ${currentListId} ('${displayName}') has no movie/series content and no custom type. Skipping manifest entry. sourceHasMovies=${sourceHasMovies}, sourceHasShows=${sourceHasShows}`);
              return;
         }
     }

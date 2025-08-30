@@ -1768,10 +1768,9 @@ module.exports = function(router) {
         });
     }
 
-    if (req.userConfig.traktAccessToken) {
-      const traktLists = await fetchTraktLists(req.userConfig); 
-      allUserLists.push(...traktLists.map(l => ({...l, source: 'trakt'})));
-  }
+    // Always fetch Trakt lists - the function will handle authentication internally
+    const traktLists = await fetchTraktLists(req.userConfig); 
+    allUserLists.push(...traktLists.map(l => ({...l, source: 'trakt'})));
 
     // Fetch from TMDB
     const { fetchTmdbLists } = require('../integrations/tmdb');
@@ -1873,6 +1872,28 @@ module.exports = function(router) {
                     lastChecked: new Date().toISOString(),
                     errorFetching: false
                 };
+          } else if ((typeof metadata.hasMovies !== 'boolean' || typeof metadata.hasShows !== 'boolean') && !req.userConfig.traktAccessToken) {
+                // For public Trakt lists that don't require authentication, set appropriate defaults
+                if (manifestListId.includes('_movies')) {
+                    determinedHasMovies = true;
+                    determinedHasShows = false;
+                } else if (manifestListId.includes('_shows')) {
+                    determinedHasMovies = false;
+                    determinedHasShows = true;
+                } else {
+                    // For lists that could contain both (like general user lists)
+                    determinedHasMovies = true;
+                    determinedHasShows = true;
+                }
+                
+                req.userConfig.listsMetadata[manifestListId] = { 
+                    ...metadata, 
+                    hasMovies: determinedHasMovies, 
+                    hasShows: determinedHasShows, 
+                    lastChecked: new Date().toISOString(),
+                    errorFetching: false
+                };
+                configChangedByThisRequest = true;
           } else { 
                req.userConfig.listsMetadata[manifestListId] = { 
                   ...metadata, 
