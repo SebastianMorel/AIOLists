@@ -120,6 +120,14 @@ async function getTraktTokens(userConfig) {
             dataKeys: data ? Object.keys(data) : 'null'
         });
         
+        // If no data found, run debug to understand why
+        if (!data) {
+            console.log(`${logPrefix} No tokens found, running debug analysis...`);
+            await closeRedisClient(client, type);
+            client = null; // Prevent double-close in finally block
+            await debugTraktTokens(userConfig);
+        }
+        
         return data;
     } catch (error) {
         const logPrefix = type === 'upstash' ? 'Upstash' : 'Redis';
@@ -180,8 +188,16 @@ async function saveTraktTokens(userConfig, tokens) {
         await setToRedis(client, type, redisKey, tokens);
         console.log(`${logPrefix} Successfully saved tokens to Redis`);
         
-        // Verify the save by reading back immediately
-        const verification = await getFromRedis(client, type, redisKey);
+        // Close the current connection before verification to ensure fresh connection
+        await closeRedisClient(client, type);
+        console.log(`${logPrefix} Closed save connection, creating fresh connection for verification`);
+        
+        // Verify the save by reading back with a fresh connection
+        const verifyConnection = await createRedisClient(userConfig);
+        const verifyClient = verifyConnection.client;
+        const verifyType = verifyConnection.type;
+        
+        const verification = await getFromRedis(verifyClient, verifyType, redisKey);
         console.log(`${logPrefix} Verification read back:`, {
             hasAccessToken: !!verification?.accessToken,
             hasRefreshToken: !!verification?.refreshToken,
@@ -189,6 +205,12 @@ async function saveTraktTokens(userConfig, tokens) {
             expiresAtType: typeof verification?.expiresAt,
             verificationSuccess: !!(verification?.accessToken && verification?.refreshToken)
         });
+        
+        await closeRedisClient(verifyClient, verifyType);
+        console.log(`${logPrefix} Closed verification connection`);
+        
+        // Clear client reference so finally block doesn't try to close it again
+        client = null;
         
     } catch (error) {
         const logPrefix = type === 'upstash' ? 'Upstash' : 'Redis';
@@ -202,6 +224,72 @@ async function saveTraktTokens(userConfig, tokens) {
                 console.log(`[REDIS] Closed Redis connection after save`);
             } catch (err) {
                 console.error('Error closing Redis client:', err.message);
+            }
+        }
+    }
+}
+
+async function debugTraktTokens(userConfig) {
+    const hasUpstash = userConfig.upstashUrl && userConfig.upstashToken;
+    const hasRedis = userConfig.redisHost;
+    
+    if (!hasUpstash && !hasRedis) {
+        console.log('[REDIS DEBUG] No Redis configuration provided');
+        return null;
+    }
+    
+    if (!userConfig.traktUuid) {
+        console.log('[REDIS DEBUG] Missing traktUuid');
+        return null;
+    }
+
+    let client, type;
+    try {
+        console.log('[REDIS DEBUG] Creating Redis connection for debugging...');
+        const redisConnection = await createRedisClient(userConfig);
+        client = redisConnection.client;
+        type = redisConnection.type;
+
+        const redisKey = `trakt:${userConfig.traktUuid}`;
+        const logPrefix = type === 'upstash' ? '[UPSTASH DEBUG]' : '[REDIS DEBUG]';
+        console.log(`${logPrefix} Debugging Redis key: ${redisKey}`);
+        
+        // Get raw data without parsing
+        if (type === 'standard') {
+            const rawData = await client.get(redisKey);
+            console.log(`${logPrefix} Raw Redis data:`, rawData);
+            console.log(`${logPrefix} Raw data type:`, typeof rawData);
+            console.log(`${logPrefix} Raw data length:`, rawData ? rawData.length : 'null');
+            
+            // Try to list all keys that match the pattern
+            const keys = await client.keys('trakt:*');
+            console.log(`${logPrefix} All trakt keys in Redis:`, keys);
+            
+            if (rawData) {
+                try {
+                    const parsed = JSON.parse(rawData);
+                    console.log(`${logPrefix} Parsed data:`, parsed);
+                } catch (parseError) {
+                    console.error(`${logPrefix} Failed to parse raw data:`, parseError.message);
+                }
+            }
+        } else {
+            const upstashData = await client.get(redisKey);
+            console.log(`${logPrefix} Upstash data:`, upstashData);
+            console.log(`${logPrefix} Upstash data type:`, typeof upstashData);
+        }
+        
+    } catch (error) {
+        const logPrefix = type === 'upstash' ? 'Upstash DEBUG' : 'Redis DEBUG';
+        console.error(`${logPrefix} Error during debug:`, error.message);
+        console.error(`${logPrefix} Error stack:`, error.stack);
+    } finally {
+        if (client && type) {
+            try {
+                await closeRedisClient(client, type);
+                console.log(`[REDIS DEBUG] Closed Redis connection after debug`);
+            } catch (err) {
+                console.error('Error closing Redis client during debug:', err.message);
             }
         }
     }
@@ -256,4 +344,4 @@ async function clearTraktTokens(userConfig) {
     }
 }
 
-module.exports = { getTraktTokens, saveTraktTokens, clearTraktTokens };
+module.exports = { getTraktTokens, saveTraktTokens, clearTraktTokens, debugTraktTokens };

@@ -1,7 +1,7 @@
 // src/integrations/trakt.js
 const axios = require('axios');
 const { ITEMS_PER_PAGE, TRAKT_CLIENT_ID, TRAKT_REDIRECT_URI, TRAKT_CONCURRENT_REQUESTS } = require('../config');
-const { getTraktTokens, saveTraktTokens, clearTraktTokens } = require('../utils/remoteStorage');
+const { getTraktTokens, saveTraktTokens, clearTraktTokens, debugTraktTokens } = require('../utils/remoteStorage');
 
 const TRAKT_API_URL = 'https://api.trakt.tv';
 
@@ -84,12 +84,22 @@ function hasRedisConfig(userConfig) {
 }
 
 async function initTraktApi(userConfig) {
+  console.log('[TRAKT] initTraktApi called with config:', {
+    hasRedisHost: !!userConfig.redisHost,
+    hasUpstashUrl: !!userConfig.upstashUrl,
+    hasTraktUuid: !!userConfig.traktUuid,
+    hasLocalAccessToken: !!userConfig.traktAccessToken,
+    hasLocalRefreshToken: !!userConfig.traktRefreshToken,
+    localExpiresAt: userConfig.traktExpiresAt
+  });
 
   
   // If Redis credentials are provided, use them as the source of truth
   if (hasRedisConfig(userConfig) && userConfig.traktUuid) {
+    console.log('[TRAKT] Redis config available, attempting to load tokens from Redis');
     const tokens = await getTraktTokens(userConfig);
     if (tokens && tokens.accessToken && tokens.refreshToken) {
+      console.log('[TRAKT] Valid tokens loaded from Redis');
       userConfig.traktAccessToken = tokens.accessToken;
       userConfig.traktRefreshToken = tokens.refreshToken;
       userConfig.traktExpiresAt = tokens.expiresAt;
@@ -104,10 +114,13 @@ async function initTraktApi(userConfig) {
     } else {
       console.log('[TRAKT] No valid tokens found in Redis');
     }
+  } else {
+    console.log('[TRAKT] No Redis config or traktUuid available, checking local tokens');
   }
 
   // Fallback for non-persistent flow (token is in the config hash)
   if (userConfig.traktAccessToken && userConfig.traktExpiresAt) {
+    console.log('[TRAKT] Local tokens available, checking expiration');
     // Check if tokens are expired - be more defensive with date handling  
     const expiresAt = typeof userConfig.traktExpiresAt === 'number' ? 
       userConfig.traktExpiresAt : 
