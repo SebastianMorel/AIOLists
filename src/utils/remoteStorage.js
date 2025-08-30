@@ -95,6 +95,7 @@ async function getTraktTokens(userConfig) {
     
     if (!userConfig.traktUuid) {
         console.log('[REDIS] getTraktTokens: Missing traktUuid');
+        console.log('[REDIS] Available userConfig keys:', Object.keys(userConfig));
         return null;
     }
 
@@ -108,6 +109,7 @@ async function getTraktTokens(userConfig) {
         const redisKey = `trakt:${userConfig.traktUuid}`;
         const logPrefix = type === 'upstash' ? '[UPSTASH]' : '[REDIS]';
         console.log(`${logPrefix} Attempting to get tokens from Redis key: ${redisKey}`);
+        console.log(`${logPrefix} traktUuid: ${userConfig.traktUuid}`);
         console.log(`${logPrefix} Redis config - Host: ${userConfig.redisHost}, Port: ${userConfig.redisPort}, DB: ${userConfig.redisDatabase}`);
         
         const data = await getFromRedis(client, type, redisKey);
@@ -157,6 +159,7 @@ async function saveTraktTokens(userConfig, tokens) {
     
     if (!userConfig.traktUuid) {
         console.log('[REDIS] saveTraktTokens: Missing traktUuid');
+        console.log('[REDIS] Available userConfig keys:', Object.keys(userConfig));
         return;
     }
 
@@ -176,6 +179,7 @@ async function saveTraktTokens(userConfig, tokens) {
         const redisKey = `trakt:${userConfig.traktUuid}`;
         const logPrefix = type === 'upstash' ? '[UPSTASH]' : '[REDIS]';
         console.log(`${logPrefix} Saving tokens to Redis key: ${redisKey}`);
+        console.log(`${logPrefix} traktUuid: ${userConfig.traktUuid}`);
         console.log(`${logPrefix} Redis config - Host: ${userConfig.redisHost}, Port: ${userConfig.redisPort}, DB: ${userConfig.redisDatabase}`);
         console.log(`${logPrefix} Tokens being saved:`, {
             hasAccessToken: !!tokens.accessToken,
@@ -306,6 +310,7 @@ async function clearTraktTokens(userConfig) {
     
     if (!userConfig.traktUuid) {
         console.log('[REDIS] clearTraktTokens: Missing traktUuid');
+        console.log('[REDIS] Available userConfig keys:', Object.keys(userConfig));
         return;
     }
 
