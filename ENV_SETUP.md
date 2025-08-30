@@ -10,6 +10,12 @@ Create a `.env` file in the root directory:
 # TMDB Configuration  
 TMDB_REDIRECT_URI=https://aiolists.elfhosted.com/
 TMDB_BEARER_TOKEN=eyJhbGciOiJIUzI1NiJ9...
+
+# Redis Configuration (optional - can be set via UI as well)
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=your_redis_password
+REDIS_DATABASE=0
 ```
 
 ## Environment Variables Explained
@@ -26,6 +32,30 @@ TMDB_BEARER_TOKEN=eyJhbGciOiJIUzI1NiJ9...
 - **Required**: No
 - **Example**: `eyJhbGciOiJIUzI1NiJ9...`
 
+### REDIS_HOST
+- **Purpose**: Redis server hostname or IP address
+- **Default**: None (enter it in the UI)
+- **Required**: No
+- **Example**: `localhost`, `redis.example.com`
+
+### REDIS_PORT
+- **Purpose**: Redis server port number
+- **Default**: 6379
+- **Required**: No
+- **Example**: `6379`
+
+### REDIS_PASSWORD
+- **Purpose**: Redis server password for authentication
+- **Default**: None (no password)
+- **Required**: No
+- **Example**: `your_redis_password`
+
+### REDIS_DATABASE
+- **Purpose**: Redis database number to use
+- **Default**: 0
+- **Required**: No
+- **Example**: `0`, `1`, `2`
+
 ## Behavior Changes with Environment Variables
 
 ### When TMDB_BEARER_TOKEN is set:
@@ -40,6 +70,12 @@ TMDB_BEARER_TOKEN=eyJhbGciOiJIUzI1NiJ9...
 ### When both TMDB_BEARER_TOKEN and redirect URIs are set:
 - Fully automated OAuth flow
 - Users get redirected back to your app after authentication
+
+### When Redis environment variables are set:
+- Redis connection fields are pre-filled in the UI with environment values
+- Users can still override the values through the UI if needed
+- Redis configuration is automatically available on startup
+- No need to manually enter Redis credentials for each user configuration
 
 ## Getting Your Tokens
 
@@ -56,11 +92,13 @@ For production deployments, set these environment variables in your hosting plat
 ```bash
 heroku config:set TMDB_BEARER_TOKEN=your_token_here
 heroku config:set TMDB_REDIRECT_URI=https://yourapp.herokuapp.com/
+heroku config:set REDIS_HOST=your_redis_host
+heroku config:set REDIS_PASSWORD=your_redis_password
 ```
 
 **Docker:**
 ```bash
-docker run -e TMDB_BEARER_TOKEN=your_token_here -e TMDB_REDIRECT_URI=https://yourapp.com/ aiolists
+docker run -e TMDB_BEARER_TOKEN=your_token_here -e TMDB_REDIRECT_URI=https://yourapp.com/ -e REDIS_HOST=redis_host -e REDIS_PASSWORD=redis_password aiolists
 ```
 
 **Railway/Render:**
