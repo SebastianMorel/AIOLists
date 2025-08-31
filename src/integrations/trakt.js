@@ -79,7 +79,7 @@ async function refreshTraktToken(userConfig) {
 // Helper function to check if Redis (either type) is configured
 function hasRedisConfig(userConfig) {
   const hasUpstash = userConfig.upstashUrl && userConfig.upstashToken;
-  const hasStandardRedis = userConfig.redisHost;
+  const hasStandardRedis = userConfig.redisHost && userConfig.redisHost.trim();
   return hasUpstash || hasStandardRedis;
 }
 
