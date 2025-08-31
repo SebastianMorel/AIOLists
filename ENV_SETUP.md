@@ -72,10 +72,10 @@ REDIS_DATABASE=0
 - Users get redirected back to your app after authentication
 
 ### When Redis environment variables are set:
-- Redis connection fields are pre-filled in the UI with environment values
-- Users can still override the values through the UI if needed
+- Individual Redis configuration fields are hidden in the UI when the corresponding environment variable is set
+- Helper text is displayed indicating that Redis configuration is using environment variables
+- Users don't need to manually enter Redis credentials for fields with environment variables
 - Redis configuration is automatically available on startup
-- No need to manually enter Redis credentials for each user configuration
 
 ## Getting Your Tokens
 
