@@ -1,6 +1,6 @@
 // src/routes/api.js
 const path = require('path');
-const { defaultConfig, staticGenres, TMDB_BEARER_TOKEN, TMDB_REDIRECT_URI, TRAKT_REDIRECT_URI } = require('../config');
+const { defaultConfig, staticGenres, TMDB_BEARER_TOKEN, TMDB_REDIRECT_URI, TRAKT_REDIRECT_URI, REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_DATABASE } = require('../config');
 const { compressConfig, decompressConfig, compressShareableConfig, createShareableConfig } = require('../utils/urlConfig');
 const { createAddon, fetchListContent } = require('../addon/addonBuilder');
 const { convertToStremioFormat } = require('../addon/converters');
@@ -790,7 +790,11 @@ module.exports = function(router) {
       env: {
         hasTmdbBearerToken: !!TMDB_BEARER_TOKEN,
         hasTmdbRedirectUri: !!TMDB_REDIRECT_URI,
-        hasTraktRedirectUri: !!TRAKT_REDIRECT_URI
+        hasTraktRedirectUri: !!TRAKT_REDIRECT_URI,
+        hasRedisHost: !!REDIS_HOST,
+        hasRedisPort: !!process.env.REDIS_PORT,
+        hasRedisPassword: !!REDIS_PASSWORD,
+        hasRedisDatabase: !!process.env.REDIS_DATABASE
       }
     });
   });

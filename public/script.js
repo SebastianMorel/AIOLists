@@ -3209,18 +3209,64 @@ function startNameEditing(listItemElement, list) {
         elements.upstashTokenInput.value = state.userConfig.upstashToken || '';
       }
       
-      // Update Redis credentials
-      if (elements.redisHostInput) {
-        elements.redisHostInput.value = state.userConfig.redisHost || '';
+      // Update Redis credentials - handle environment variable hiding
+      const redisEnvHelperText = document.getElementById('redisEnvHelperText');
+      const redisHostGroup = document.getElementById('redisHostGroup');
+      const redisPortGroup = document.getElementById('redisPortGroup');
+      const redisPasswordGroup = document.getElementById('redisPasswordGroup');
+      const redisDatabaseGroup = document.getElementById('redisDatabaseGroup');
+      
+      // Check if any Redis environment variables are set
+      const hasAnyRedisEnv = state.env && (
+        state.env.hasRedisHost || 
+        state.env.hasRedisPort || 
+        state.env.hasRedisPassword || 
+        state.env.hasRedisDatabase
+      );
+      
+      // Show helper text if any Redis environment variables are set
+      if (redisEnvHelperText) {
+        redisEnvHelperText.style.display = hasAnyRedisEnv ? 'block' : 'none';
       }
-      if (elements.redisPortInput) {
-        elements.redisPortInput.value = state.userConfig.redisPort || 6379;
+      
+      // Handle Redis Host field
+      if (elements.redisHostInput && redisHostGroup) {
+        if (state.env && state.env.hasRedisHost) {
+          redisHostGroup.style.display = 'none';
+        } else {
+          redisHostGroup.style.display = 'block';
+          elements.redisHostInput.value = state.userConfig.redisHost || '';
+        }
       }
-      if (elements.redisPasswordInput) {
-        elements.redisPasswordInput.value = state.userConfig.redisPassword || '';
+      
+      // Handle Redis Port field
+      if (elements.redisPortInput && redisPortGroup) {
+        if (state.env && state.env.hasRedisPort) {
+          redisPortGroup.style.display = 'none';
+        } else {
+          redisPortGroup.style.display = 'block';
+          elements.redisPortInput.value = state.userConfig.redisPort || 6379;
+        }
       }
-      if (elements.redisDatabaseInput) {
-        elements.redisDatabaseInput.value = state.userConfig.redisDatabase || 0;
+      
+      // Handle Redis Password field
+      if (elements.redisPasswordInput && redisPasswordGroup) {
+        if (state.env && state.env.hasRedisPassword) {
+          redisPasswordGroup.style.display = 'none';
+        } else {
+          redisPasswordGroup.style.display = 'block';
+          elements.redisPasswordInput.value = state.userConfig.redisPassword || '';
+        }
+      }
+      
+      // Handle Redis Database field
+      if (elements.redisDatabaseInput && redisDatabaseGroup) {
+        if (state.env && state.env.hasRedisDatabase) {
+          redisDatabaseGroup.style.display = 'none';
+        } else {
+          redisDatabaseGroup.style.display = 'block';
+          elements.redisDatabaseInput.value = state.userConfig.redisDatabase || 0;
+        }
       }
 
       // Update metadata settings
