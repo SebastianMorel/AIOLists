@@ -15,6 +15,29 @@ const { saveTraktTokens } = require('../utils/remoteStorage');
 
 const manifestCache = new Cache({ defaultTTL: 1 * 60 * 1000 });
 
+// Extract a key from the `extra` segment of a catalog URL.
+//
+// This reads from the *raw* (still percent-encoded) path rather than
+// req.params.extra, which Express has already decoded. Decoding first loses
+// information we need:
+//   - a '+' meaning "space" becomes indistinguishable from a literal '+'
+//     that arrived correctly encoded as %2B (e.g. a search for "C++"), and
+//   - an encoded '%26' becomes a real '&', which then truncates the value
+//     at what looks like a parameter separator (e.g. "Tom & Jerry").
+//
+// Matching on the raw text keeps the delimiters unambiguous; we translate '+'
+// to a space per application/x-www-form-urlencoded, then percent-decode once.
+function extractExtraParam(rawPath, key) {
+  const rawExtra = rawPath.split('?')[0].split('/').pop().replace(/\.json$/, '');
+  const match = rawExtra.match(new RegExp(`(?:^|&)${key}=([^&]*)`));
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1].replace(/\+/g, '%20'));
+  } catch (e) {
+    return null;
+  }
+}
+
 // Helper function to create a config copy for storage that excludes sensitive Trakt tokens when using Upstash
 function createConfigForStorage(userConfig) {
   const configForStorage = { ...userConfig };
@@ -380,8 +403,7 @@ module.exports = function(router) {
         if (skipMatch) skip = parseInt(skipMatch[1]);
       }
       if (!genre && extraParamsString) {
-        const genreMatch = extraParamsString.match(/genre=([^&]+)/);
-        if (genreMatch) genre = decodeURIComponent(genreMatch[1]);
+        genre = extractExtraParam(req.url, 'genre');
       }
 
       if (genre === 'All') {
@@ -397,10 +419,7 @@ module.exports = function(router) {
         
         // Extract search query from extra params if not in query string
         if (!searchQuery && extraParamsString) {
-          const searchMatch = extraParamsString.match(/search=([^&]+)/);
-          if (searchMatch) {
-            searchQuery = decodeURIComponent(searchMatch[1]);
-          }
+          searchQuery = extractExtraParam(req.url, 'search');
         }
         
         if (!searchQuery || searchQuery.trim().length < 2) {
